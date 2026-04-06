@@ -36,13 +36,16 @@ Options:
   --file <path>                 Path to SQL file (for branch exec)
   --export                      Output 'export SOW_URL=...' (branch create)
   --env-file <path>             Write DATABASE_URL to this file
-  --append                      Append to env file instead of overwriting
+  --no-env-file                 Skip env file patching (sandbox)
+  -y, --yes                     Skip interactive confirmation prompts
+  --append                      Deprecated; --env-file now always merges
   --agent <name>                Agent to configure MCP for
   --setup                       Interactive MCP setup
   --local                       Use local binary path for MCP config
   -h, --help                    Show help
 
 Commands:
+  sandbox [url]                 Zero-config: detect DB, sample, branch, patch .env.local
   connect [url]                 Connect to production DB and create a snapshot
   branch create <name>          Create an isolated database branch
   branch list                   List all branches
@@ -66,8 +69,13 @@ Commands:
   analyze <url>                 Analyze database schema, stats, and PII
   doctor                        Check setup and diagnose issues
   mcp                           Configure MCP server for coding agents
+  env revert [path]             Restore .env.local from a sow backup
 
 Examples:
+
+- Zero-config sandbox (detects your DB, patches .env.local)
+
+  $ sow sandbox
 
 - Auto-detect and connect (reads .env, Prisma, Docker Compose, etc.)
 
@@ -112,6 +120,8 @@ Examples:
       file: { type: "string" },
       export: { type: "boolean", default: false },
       envFile: { type: "string" },
+      noEnvFile: { type: "boolean", default: false },
+      yes: { type: "boolean", shortFlag: "y", default: false },
       append: { type: "boolean", default: false },
       agent: { type: "string" },
       setup: { type: "boolean", default: false },
@@ -145,7 +155,7 @@ if (!command) {
   let connectionString: string | undefined;
   let branchName: string | undefined;
 
-  if (command === "branch" || command === "connector") {
+  if (command === "branch" || command === "connector" || command === "env") {
     subcommand = rest[0];
     branchName = rest[1];
     if (rest[2]) {
