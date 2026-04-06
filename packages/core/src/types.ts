@@ -1,0 +1,340 @@
+// ---------------------------------------------------------------------------
+// Database Adapter — the plugin seam for future MySQL / MongoDB / etc.
+// ---------------------------------------------------------------------------
+
+export interface DatabaseAdapter {
+  connect(connectionString: string): Promise<void>;
+  disconnect(): Promise<void>;
+
+  getSchema(): Promise<SchemaInfo>;
+  getTableStats(table: string): Promise<TableStats>;
+  getColumnStats(table: string, column: string): Promise<ColumnStats>;
+  getSampleRows(
+    table: string,
+    limit: number,
+    offset?: number,
+  ): Promise<Record<string, unknown>[]>;
+  getAllRows(table: string): Promise<Record<string, unknown>[]>;
+  getRandomSample(
+    table: string,
+    limit: number,
+    seed: number,
+  ): Promise<Record<string, unknown>[]>;
+  getRowCount(table: string): Promise<number>;
+  query<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<T[]>;
+
+  getConnectionInfo(): ConnectionInfo;
+}
+
+export interface ConnectionInfo {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  masked: string;
+}
+
+// ---------------------------------------------------------------------------
+// Type Mapper — translates source DB types to export targets
+// ---------------------------------------------------------------------------
+
+export interface TypeMapper {
+  toSQLite(sourceType: string): string;
+  toJSON(sourceType: string): string;
+  toInsertLiteral(value: unknown, sourceType: string): string;
+  needsQuoting(sourceType: string): boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Schema types
+// ---------------------------------------------------------------------------
+
+export interface SchemaInfo {
+  tables: TableInfo[];
+  relationships: Relationship[];
+  indexes: IndexInfo[];
+  enums: EnumType[];
+  extensions: string[];
+}
+
+export interface TableInfo {
+  name: string;
+  schema: string;
+  columns: ColumnInfo[];
+  primaryKey: string[];
+  constraints: ConstraintInfo[];
+}
+
+export interface ColumnInfo {
+  name: string;
+  type: string;
+  nullable: boolean;
+  defaultValue: string | null;
+  maxLength: number | null;
+  isGenerated: boolean;
+}
+
+export interface ConstraintInfo {
+  name: string;
+  type: "PRIMARY KEY" | "UNIQUE" | "CHECK" | "FOREIGN KEY" | "EXCLUDE";
+  columns: string[];
+}
+
+export interface Relationship {
+  name: string;
+  sourceTable: string;
+  sourceColumns: string[];
+  targetTable: string;
+  targetColumns: string[];
+  onDelete: string;
+  onUpdate: string;
+}
+
+export interface IndexInfo {
+  name: string;
+  table: string;
+  columns: string[];
+  unique: boolean;
+  type: string;
+}
+
+export interface EnumType {
+  name: string;
+  schema: string;
+  values: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Statistics types
+// ---------------------------------------------------------------------------
+
+export interface TableStats {
+  table: string;
+  rowCount: number;
+  sizeBytes: number | null;
+  columnStats: ColumnStats[];
+}
+
+export interface ColumnStats {
+  column: string;
+  distinctCount: number;
+  nullCount: number;
+  nullPercentage: number;
+  minValue: unknown | null;
+  maxValue: unknown | null;
+  avgLength: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// PII detection types
+// ---------------------------------------------------------------------------
+
+export type PIIType =
+  | "email"
+  | "phone"
+  | "name"
+  | "address"
+  | "ssn"
+  | "credit_card"
+  | "ip"
+  | "url"
+  | "uuid"
+  | "date_of_birth"
+  | "password"
+  | "free_text"
+  | "custom";
+
+export type PIIConfidence = "high" | "medium" | "low" | "uncertain";
+
+export interface PIIPattern {
+  type: PIIType;
+  columnNamePatterns: RegExp[];
+  valuePatterns: RegExp[];
+  description: string;
+}
+
+export interface PIIDetectionResult {
+  isPII: boolean;
+  type: PIIType | null;
+  confidence: PIIConfidence;
+  matchedBy: "column_name" | "value_pattern" | null;
+  sampleMatches: number;
+  totalSampled: number;
+}
+
+export interface PIIColumnInfo {
+  table: string;
+  column: string;
+  type: PIIType;
+  confidence: PIIConfidence;
+  matchedBy: "column_name" | "value_pattern";
+}
+
+// ---------------------------------------------------------------------------
+// Edge case types
+// ---------------------------------------------------------------------------
+
+export interface EdgeCaseInfo {
+  table: string;
+  column: string;
+  type: EdgeCaseType;
+  value: unknown;
+  rowIndex: number;
+}
+
+export type EdgeCaseType =
+  | "null"
+  | "empty_string"
+  | "min_numeric"
+  | "max_numeric"
+  | "longest_string"
+  | "shortest_string"
+  | "special_chars"
+  | "unicode"
+  | "emoji";
+
+// ---------------------------------------------------------------------------
+// Data pattern types
+// ---------------------------------------------------------------------------
+
+export interface DataTypePattern {
+  table: string;
+  column: string;
+  detectedType: PIIType;
+  confidence: PIIConfidence;
+  sampleSize: number;
+}
+
+// ---------------------------------------------------------------------------
+// Analysis result — the full output of the analyzer
+// ---------------------------------------------------------------------------
+
+export interface AnalysisResult {
+  schema: SchemaInfo;
+  stats: {
+    tables: TableStats[];
+    totalSizeBytes: number;
+    totalRows: number;
+  };
+  patterns: {
+    piiColumns: PIIColumnInfo[];
+    edgeCases: EdgeCaseInfo[];
+    dataTypes: DataTypePattern[];
+  };
+  dependencyOrder: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Sampling config
+// ---------------------------------------------------------------------------
+
+export interface SamplingConfig {
+  maxRowsPerTable: number;
+  includeEdgeCases: boolean;
+  seed: number;
+  excludeTables: string[];
+  includeTables: string[];
+}
+
+export const DEFAULT_SAMPLING_CONFIG: SamplingConfig = {
+  maxRowsPerTable: 200,
+  includeEdgeCases: true,
+  seed: 42,
+  excludeTables: [],
+  includeTables: [],
+};
+
+// ---------------------------------------------------------------------------
+// Sampling result
+// ---------------------------------------------------------------------------
+
+export interface SampledTable {
+  table: string;
+  rows: Record<string, unknown>[];
+  totalRowsInSource: number;
+  edgeCasesIncluded: EdgeCaseInfo[];
+}
+
+export interface SamplingResult {
+  tables: SampledTable[];
+  config: SamplingConfig;
+}
+
+// ---------------------------------------------------------------------------
+// Sanitization config & rules
+// ---------------------------------------------------------------------------
+
+export interface SanitizationConfig {
+  enabled: boolean;
+  rules: SanitizationRule[];
+  skipColumns: string[];
+}
+
+export interface SanitizationRule {
+  table: string;
+  column: string;
+  type: PIIType;
+  transformer?: (originalValue: string, seed: string) => string;
+}
+
+export interface SanitizedTable {
+  table: string;
+  rows: Record<string, unknown>[];
+  sanitizedColumns: string[];
+}
+
+export interface SanitizationResult {
+  tables: SanitizedTable[];
+  rulesApplied: SanitizationRule[];
+  columnsSkipped: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Export config
+// ---------------------------------------------------------------------------
+
+export type ExportFormat = "sql" | "docker" | "sqlite" | "json";
+
+export interface ExportConfig {
+  format: ExportFormat;
+  outputPath: string;
+  schema: SchemaInfo;
+}
+
+export interface ExportResult {
+  format: ExportFormat;
+  outputPath: string;
+  files: string[];
+  totalSize: number;
+  tableCount: number;
+  rowCount: number;
+}
+
+
+// ---------------------------------------------------------------------------
+// Progress events (for --json mode and MCP)
+// ---------------------------------------------------------------------------
+
+export type ProgressEventType =
+  | "connecting"
+  | "analyzing_schema"
+  | "analyzing_stats"
+  | "detecting_pii"
+  | "sanitizing"
+  | "selecting_samples"
+  | "exporting"
+  | "done"
+  | "error";
+
+export interface ProgressEvent {
+  type: ProgressEventType;
+  message: string;
+  progress?: number;
+  total?: number;
+  detail?: Record<string, unknown>;
+}
+
+export type ProgressCallback = (event: ProgressEvent) => void;

@@ -1,0 +1,32 @@
+services:
+  test-db:
+    image: postgres:16-alpine
+    ports:
+      - "5555:5432"
+    environment:
+      POSTGRES_DB: saasdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d saasdb"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  bugster-db:
+    image: postgres:16-alpine
+    ports:
+      - "5556:5432"
+    environment:
+      POSTGRES_DB: bugsterdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./bugster-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bugsterdb"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
