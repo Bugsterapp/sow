@@ -1,7 +1,7 @@
 {
   "name": "@sowdb/core",
   "version": "0.1.14",
-  "description": "sow core engine: analyze, sample, sanitize, and branch Postgres databases",
+  "description": "sow core engine — analyze, sample, sanitize, and branch Postgres databases for safe coding-agent sandboxes",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -15,7 +15,10 @@
     "database",
     "sanitize",
     "pii",
-    "sow"
+    "sow",
+    "ai-agents",
+    "coding-agents",
+    "sandbox"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,7 +1,7 @@
 {
   "name": "@sowdb/cli",
   "version": "0.1.14",
-  "description": "Safe test databases from production Postgres",
+  "description": "Stop letting Claude touch your prod database. PII-safe local Postgres sandbox for coding agents.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -17,7 +17,13 @@
     "docker",
     "sow",
     "pii",
-    "sanitize"
+    "sanitize",
+    "ai-agents",
+    "coding-agents",
+    "claude-code",
+    "cursor",
+    "sandbox",
+    "mcp"
   ],
   "bin": {
     "sow": "dist/cli.js"
