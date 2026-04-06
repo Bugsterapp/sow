@@ -120,6 +120,19 @@ Three workflows that show the full agent loop. See [`docs/cookbook.md`](docs/coo
 - [`CHANGELOG.md`](CHANGELOG.md) — release history
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — building from source, running tests, the lane structure
 
+## Security
+
+sow's entire reason for existing is to stop destructive mistakes against real databases, so we take our own security posture seriously. A few concrete commitments:
+
+- **Read-only on the source.** sow never issues `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE`, or any DDL against the source database you point it at. The connector code path is read-only in intent and effect. Point it at a read-only Postgres user and it will still work (we recommend it).
+- **Parameterized SQL everywhere.** Every dynamic query uses `$1, $2, ...` bind parameters. Every identifier (table and column name) is quoted via a dedicated `quoteIdent()` helper that throws on empty identifiers and embedded NUL bytes. No string interpolation in SQL, anywhere in the code path that touches the source DB or the sandbox.
+- **Fail-closed sanitizer.** `sow connect` aborts if it encounters a Postgres type it cannot verify (a custom enum, an `hstore`, a `tsvector`, etc.), rather than silently passing the raw values through to the sandbox. Users who want the "copy as-is" behavior must pass `--allow-unsafe` explicitly, and even then unknown columns are NULLed out rather than preserved. See [`docs/sanitization.md`](docs/sanitization.md).
+- **Dual-model adversarial review.** The security-sensitive code paths (sampler, branching, sanitizer) have been reviewed independently by Claude and Codex adversarial subagents. Both passes clean before any tagged release.
+- **Hard-gated destructive branch providers.** The Supabase branch provider is destructive-by-design (it writes sanitized data into your local Supabase's `public` schema so you keep the Auth/RLS/Realtime integration). It only activates when the current project has `supabase/config.toml` AND you explicitly opt in via `--yes-destructive-supabase` or the `.sow.yml` field `providers.supabase.destructive_consent`. From any other directory, or without explicit consent, sow uses the Docker provider and spins up a fresh isolated container with zero blast radius.
+- **Security-relevant changes are documented.** Every security fix has its own section in [`CHANGELOG.md`](CHANGELOG.md) with a description of the root cause, the fix, and the regression tests that now cover it. We believe in visible security work.
+
+Found a security issue? Open a GitHub issue or email the maintainers. Responsible disclosure is appreciated.
+
 ## sow Cloud — coming soon
 
 sow CLI is free, open source, and works 100% locally. Always will be.
