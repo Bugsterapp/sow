@@ -62,7 +62,7 @@ Commands:
   connector delete <name>       Delete a connector and its snapshot
   connector refresh <name>      Re-create snapshot with fresh data
   analyze <url>                 Analyze database schema, stats, and PII
-  doctor                        Check setup and diagnose issues
+  doctor [connector]            Check setup; pass a connector name for details
   mcp                           Configure MCP server for coding agents
 
 Examples:
