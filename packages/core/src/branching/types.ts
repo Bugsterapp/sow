@@ -68,6 +68,11 @@ export interface ConnectorCreateOptions {
   seed?: number;
   /** Copy all rows instead of sampling. Overrides maxRowsPerTable. */
   full?: boolean;
+  /**
+   * When true, columns whose Postgres type the sanitizer cannot verify are
+   * NULLed out instead of aborting the connect. Maps to CLI `--allow-unsafe`.
+   */
+  allowUnsafe?: boolean;
 }
 
 export interface ConnectorCreateResult {

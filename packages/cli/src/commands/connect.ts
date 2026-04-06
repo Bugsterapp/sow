@@ -244,6 +244,7 @@ export async function runConnect(
         ? merged.samplingConfig.excludeTables
         : undefined,
       noSanitize: !merged.sanitizationConfig.enabled,
+      allowUnsafe: !!flags.allowUnsafe,
       seed: merged.samplingConfig.seed,
     }, log);
 
