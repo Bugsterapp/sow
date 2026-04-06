@@ -52,9 +52,13 @@ async function fetchAuthUserMappings(
 ): Promise<AuthUserMapping[]> {
   if (userIds.length === 0) return [];
   try {
-    const idList = userIds.map((id) => `'${id}'`).join(",");
+    // Build $1,$2,... placeholders and bind userIds as parameters. The
+    // pre-fix code interpolated the ids inside single-quoted literals,
+    // which a source row with a quote or crafted payload could escape.
+    const placeholders = userIds.map((_, i) => `$${i + 1}`).join(",");
     const rows = await adapter.query<{ id: string; email: string }>(
-      `SELECT id::text, email FROM auth.users WHERE id IN (${idList})`,
+      `SELECT id::text, email FROM auth.users WHERE id IN (${placeholders})`,
+      userIds,
     );
     return rows.map((row) => ({
       id: row.id,

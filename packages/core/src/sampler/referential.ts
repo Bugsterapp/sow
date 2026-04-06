@@ -1,25 +1,13 @@
 import type { DatabaseAdapter, Relationship } from "../types.js";
+import { quoteIdent } from "../sql/identifiers.js";
+
+// Re-export so existing test imports keep working.
+export { quoteIdent };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Columns already handled by formal FKs or that shouldn't be followed
 const SKIP_IMPLICIT_COLUMNS = new Set(["id", "user_id", "owner_id", "created_by"]);
-
-/**
- * Safely quote a SQL identifier (table or column name).
- *
- * Postgres binds values via $1,$2,... but identifiers cannot be parameterized.
- * We wrap in double quotes and escape any embedded double quote by doubling it,
- * per the SQL standard. This prevents an identifier containing quotes (e.g. a
- * hostile or quirky catalog name) from breaking out of the quoting and turning
- * into injectable SQL. The values in the queries themselves are always bound
- * via the `params` array.
- *
- * Example: quoteIdent('weird"name') -> '"weird""name"'
- */
-export function quoteIdent(name: string): string {
-  return '"' + name.replace(/"/g, '""') + '"';
-}
 
 /**
  * Infer which table a column like `session_id` or `run_id` references.

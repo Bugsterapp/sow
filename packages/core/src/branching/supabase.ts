@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import postgres from "postgres";
+import { quoteIdent } from "../sql/identifiers.js";
 
 const SUPABASE_DB_PORT = 54322;
 const SUPABASE_API_PORT = 54321;
@@ -113,30 +114,47 @@ export async function loadIntoSupabase(
 
     for (const t of tables) {
       const tableName = t.tablename as string;
+      // tableName comes from the sandbox DB's pg_catalog. Even though we
+      // control the sandbox, a catalog row containing an unusual character
+      // (e.g. a double quote from a quoted DDL identifier in the source
+      // schema) must not break out of our identifier quoting.
+      const quotedTable = quoteIdent(tableName);
       try {
+        // Parameterize the value `tableName` in information_schema lookups.
+        // Identifiers (the policy name, the qualified table reference) are
+        // quoted via quoteIdent because SQL binds values only, not names.
         const cols = await sql.unsafe(
-          `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '${tableName}' AND column_name IN ('user_id', 'owner_id', 'created_by')`,
+          "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name IN ('user_id', 'owner_id', 'created_by')",
+          [tableName] as unknown as Parameters<typeof sql.unsafe>[1],
         );
 
-        await sql.unsafe(`ALTER TABLE public."${tableName}" ENABLE ROW LEVEL SECURITY`);
+        await sql.unsafe(`ALTER TABLE public.${quotedTable} ENABLE ROW LEVEL SECURITY`);
 
         if (cols.length > 0) {
-          const userCol = cols[0].column_name;
-          await sql.unsafe(`CREATE POLICY "sow_owner" ON public."${tableName}" FOR ALL USING ("${userCol}" = auth.uid())`);
+          const userCol = cols[0].column_name as string;
+          const quotedUserCol = quoteIdent(userCol);
+          await sql.unsafe(
+            `CREATE POLICY "sow_owner" ON public.${quotedTable} FOR ALL USING (${quotedUserCol} = auth.uid())`,
+          );
         } else {
           const hasProjId = await sql.unsafe(
-            `SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '${tableName}' AND column_name = 'project_id' LIMIT 1`,
+            "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = 'project_id' LIMIT 1",
+            [tableName] as unknown as Parameters<typeof sql.unsafe>[1],
           );
 
           if (hasProjId.length > 0) {
-            await sql.unsafe(`CREATE POLICY "sow_project" ON public."${tableName}" FOR ALL USING (project_id IN (SELECT id FROM public.projects WHERE user_id = auth.uid()))`);
+            await sql.unsafe(
+              `CREATE POLICY "sow_project" ON public.${quotedTable} FOR ALL USING (project_id IN (SELECT id FROM public.projects WHERE user_id = auth.uid()))`,
+            );
           } else {
-            await sql.unsafe(`CREATE POLICY "sow_open" ON public."${tableName}" FOR ALL USING (auth.role() = 'authenticated')`);
+            await sql.unsafe(
+              `CREATE POLICY "sow_open" ON public.${quotedTable} FOR ALL USING (auth.role() = 'authenticated')`,
+            );
           }
         }
       } catch {
         try {
-          await sql.unsafe(`ALTER TABLE public."${tableName}" DISABLE ROW LEVEL SECURITY`);
+          await sql.unsafe(`ALTER TABLE public.${quotedTable} DISABLE ROW LEVEL SECURITY`);
         } catch { /* ignore */ }
       }
     }
@@ -228,43 +246,81 @@ export async function createTestAuthUsers(
 
   try {
     for (const user of users) {
-      const useId = user.id
-        ? `'${user.id}'::uuid`
-        : "gen_random_uuid()";
-
       try {
-        // Remove existing entries for this ID or email to avoid conflicts
+        // Remove existing entries for this ID or email to avoid conflicts.
+        // user.id flows through $1 (cast server-side to uuid), not into
+        // the SQL text. Empty/malformed ids raise a cast error which is
+        // caught below, which is the intended behavior.
         if (user.id) {
-          await sql.unsafe(`DELETE FROM auth.identities WHERE user_id = '${user.id}'`);
-          await sql.unsafe(`DELETE FROM auth.users WHERE id = '${user.id}'`);
+          await sql.unsafe(
+            "DELETE FROM auth.identities WHERE user_id = $1::uuid",
+            [user.id] as unknown as Parameters<typeof sql.unsafe>[1],
+          );
+          await sql.unsafe(
+            "DELETE FROM auth.users WHERE id = $1::uuid",
+            [user.id] as unknown as Parameters<typeof sql.unsafe>[1],
+          );
         }
 
-        await sql.unsafe(`
-          INSERT INTO auth.users (
-            instance_id, id, aud, role, email, encrypted_password,
-            email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
-            created_at, updated_at, confirmation_token, email_change,
-            email_change_token_new, recovery_token
-          ) VALUES (
-            '00000000-0000-0000-0000-000000000000',
-            ${useId}, 'authenticated', 'authenticated',
-            '${user.email}',
-            crypt('password123', gen_salt('bf')),
-            now(),
-            '{"provider":"email","providers":["email"]}',
-            '{}',
-            now(), now(), '', '', '', ''
-          )
-        `);
+        // When user.id is empty, we want `gen_random_uuid()` as the id.
+        // That's SQL, not a value, so it cannot be parameterized directly.
+        // Branch on whether we have an id: either bind $1::uuid, or use
+        // the SQL function literal.
+        if (user.id) {
+          await sql.unsafe(
+            `
+            INSERT INTO auth.users (
+              instance_id, id, aud, role, email, encrypted_password,
+              email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+              created_at, updated_at, confirmation_token, email_change,
+              email_change_token_new, recovery_token
+            ) VALUES (
+              '00000000-0000-0000-0000-000000000000',
+              $1::uuid, 'authenticated', 'authenticated',
+              $2,
+              crypt('password123', gen_salt('bf')),
+              now(),
+              '{"provider":"email","providers":["email"]}',
+              '{}',
+              now(), now(), '', '', '', ''
+            )
+          `,
+            [user.id, user.email] as unknown as Parameters<typeof sql.unsafe>[1],
+          );
+        } else {
+          await sql.unsafe(
+            `
+            INSERT INTO auth.users (
+              instance_id, id, aud, role, email, encrypted_password,
+              email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+              created_at, updated_at, confirmation_token, email_change,
+              email_change_token_new, recovery_token
+            ) VALUES (
+              '00000000-0000-0000-0000-000000000000',
+              gen_random_uuid(), 'authenticated', 'authenticated',
+              $1,
+              crypt('password123', gen_salt('bf')),
+              now(),
+              '{"provider":"email","providers":["email"]}',
+              '{}',
+              now(), now(), '', '', '', ''
+            )
+          `,
+            [user.email] as unknown as Parameters<typeof sql.unsafe>[1],
+          );
+        }
 
-        // Create matching identity for login
-        await sql.unsafe(`
+        // Create matching identity for login — bind the email value.
+        await sql.unsafe(
+          `
           INSERT INTO auth.identities (id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
           SELECT gen_random_uuid(), id, id,
             format('{"sub":"%s","email":"%s"}', id::text, email)::jsonb,
             'email', now(), now(), now()
-          FROM auth.users WHERE email = '${user.email}'
-        `);
+          FROM auth.users WHERE email = $1
+        `,
+          [user.email] as unknown as Parameters<typeof sql.unsafe>[1],
+        );
       } catch {
         // Skip users that can't be created
       }
