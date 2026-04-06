@@ -36,6 +36,106 @@ function matchValues(
  */
 const NUMERIC_TYPES = /^(int|float|double|decimal|numeric|real|serial|bigint|smallint|money|int2|int4|int8|float4|float8)/i;
 
+/**
+ * Postgres types that are inherently safe: no PII, no transformation needed,
+ * can be copied to the sandbox verbatim. Used by the fail-closed gate.
+ */
+const SAFE_PASSTHROUGH_TYPES = new Set([
+  // numeric
+  "int", "int2", "int4", "int8", "smallint", "integer", "bigint",
+  "serial", "bigserial", "smallserial",
+  "real", "float4", "float8", "double precision", "numeric", "decimal",
+  "money",
+  // boolean
+  "bool", "boolean",
+  // date/time
+  "date", "time", "timetz", "timestamp", "timestamptz",
+  "interval",
+  // uuid (sanitized separately if name matches)
+  "uuid",
+  // binary / large
+  "bytea",
+  // ranges
+  "int4range", "int8range", "numrange", "tsrange", "tstzrange", "daterange",
+  // geometric / network / other
+  "point", "line", "lseg", "box", "path", "polygon", "circle",
+  // bit
+  "bit", "varbit",
+  // oid family
+  "oid", "regproc", "regclass", "regtype",
+]);
+
+/**
+ * Postgres types the sanitizer actively handles via the detector
+ * (either through value-pattern matching on text, or a dedicated transformer).
+ */
+const HANDLED_TEXT_TYPES = new Set([
+  "text", "varchar", "char", "character", "character varying", "citext", "name",
+]);
+
+const HANDLED_SPECIAL_TYPES = new Set([
+  "jsonb", "json",
+  "inet", "cidr",
+  "macaddr", "macaddr8",
+  "xml",
+]);
+
+/** Strip the `[]` suffix (or leading `_`) from a Postgres array type. */
+export function stripArraySuffix(pgType: string): { baseType: string; isArray: boolean } {
+  const t = pgType.trim();
+  if (t.endsWith("[]")) return { baseType: t.slice(0, -2), isArray: true };
+  if (t.startsWith("_")) return { baseType: t.slice(1), isArray: true };
+  return { baseType: t, isArray: false };
+}
+
+/**
+ * Classify a Postgres type for the fail-closed sanitization gate.
+ *
+ * - "safe":     known non-PII, passthrough OK
+ * - "handled":  the sanitizer has a detector or transformer for this type
+ * - "unknown":  not in any known set — must be reported to the gate
+ */
+export function classifyPgType(
+  pgType: string,
+  knownEnumTypes: Set<string> = new Set(),
+): "safe" | "handled" | "unknown" {
+  const normalized = pgType.trim().toLowerCase();
+  const { baseType } = stripArraySuffix(normalized);
+
+  if (SAFE_PASSTHROUGH_TYPES.has(baseType)) return "safe";
+  if (HANDLED_TEXT_TYPES.has(baseType)) return "handled";
+  if (HANDLED_SPECIAL_TYPES.has(baseType)) return "handled";
+  if (NUMERIC_TYPES.test(baseType)) return "safe";
+  if (knownEnumTypes.has(baseType)) return "safe";
+  // Common qualified enum names like "public.user_role"
+  if (knownEnumTypes.has(baseType.replace(/^public\./, ""))) return "safe";
+  return "unknown";
+}
+
+/** Map a Postgres data_type string to a PIIType when that mapping is intrinsic
+ * to the type (ignoring column name). Used both by the gate and the detector.
+ */
+export function pgTypeToPIIType(pgType: string): import("../types.js").PIIType | null {
+  const { baseType } = stripArraySuffix(pgType.trim().toLowerCase());
+  switch (baseType) {
+    case "jsonb":
+    case "json":
+      return "jsonb";
+    case "inet":
+    case "cidr":
+      return "ip_address";
+    case "macaddr":
+    case "macaddr8":
+      return "mac_address";
+    case "xml":
+      return "xml_text";
+    case "bytea":
+      return "binary_blob";
+    default:
+      return null;
+  }
+}
+
 export function detectColumnPII(
   columnName: string,
   columnType: string,
@@ -52,6 +152,19 @@ export function detectColumnPII(
         totalSampled: sampleValues.length,
       };
     }
+  }
+
+  // Type-intrinsic PII (jsonb, inet, macaddr, xml, etc.) — no column name needed.
+  const intrinsic = pgTypeToPIIType(columnType);
+  if (intrinsic) {
+    return {
+      isPII: true,
+      type: intrinsic,
+      confidence: "high",
+      matchedBy: "column_name",
+      sampleMatches: 0,
+      totalSampled: sampleValues.length,
+    };
   }
 
   if (NUMERIC_TYPES.test(columnType)) {

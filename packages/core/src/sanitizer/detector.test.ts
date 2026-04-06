@@ -1,4 +1,10 @@
-import { detectColumnPII, detectTablePII } from "./detector.js";
+import {
+  detectColumnPII,
+  detectTablePII,
+  classifyPgType,
+  stripArraySuffix,
+  pgTypeToPIIType,
+} from "./detector.js";
 
 describe("detectColumnPII", () => {
   describe("email detection", () => {
@@ -119,5 +125,76 @@ describe("detectTablePII", () => {
     expect(types).toContain("email");
     expect(types).toContain("name");
     expect(results.every((r) => r.table === "users")).toBe(true);
+  });
+});
+
+describe("Postgres type classification", () => {
+  it("classifies known numeric/date/bool as safe", () => {
+    expect(classifyPgType("int4")).toBe("safe");
+    expect(classifyPgType("bigint")).toBe("safe");
+    expect(classifyPgType("timestamp")).toBe("safe");
+    expect(classifyPgType("boolean")).toBe("safe");
+    expect(classifyPgType("uuid")).toBe("safe");
+    expect(classifyPgType("money")).toBe("safe");
+    expect(classifyPgType("interval")).toBe("safe");
+    expect(classifyPgType("int4range")).toBe("safe");
+    expect(classifyPgType("bytea")).toBe("safe");
+  });
+
+  it("classifies text-like types as handled", () => {
+    expect(classifyPgType("text")).toBe("handled");
+    expect(classifyPgType("varchar")).toBe("handled");
+    expect(classifyPgType("citext")).toBe("handled");
+  });
+
+  it("classifies jsonb/inet/macaddr/xml as handled", () => {
+    expect(classifyPgType("jsonb")).toBe("handled");
+    expect(classifyPgType("json")).toBe("handled");
+    expect(classifyPgType("inet")).toBe("handled");
+    expect(classifyPgType("cidr")).toBe("handled");
+    expect(classifyPgType("macaddr")).toBe("handled");
+    expect(classifyPgType("xml")).toBe("handled");
+  });
+
+  it("classifies pg_lsn / hstore / tsvector as unknown", () => {
+    expect(classifyPgType("pg_lsn")).toBe("unknown");
+    expect(classifyPgType("hstore")).toBe("unknown");
+    expect(classifyPgType("tsvector")).toBe("unknown");
+  });
+
+  it("treats custom enum types as safe when provided in the enum set", () => {
+    const enums = new Set(["user_role"]);
+    expect(classifyPgType("user_role", enums)).toBe("safe");
+    expect(classifyPgType("user_role")).toBe("unknown");
+  });
+
+  it("strips array suffix and classifies via base type", () => {
+    expect(stripArraySuffix("text[]")).toEqual({ baseType: "text", isArray: true });
+    expect(stripArraySuffix("_int4")).toEqual({ baseType: "int4", isArray: true });
+    expect(stripArraySuffix("text")).toEqual({ baseType: "text", isArray: false });
+    expect(classifyPgType("text[]")).toBe("handled");
+    expect(classifyPgType("int4[]")).toBe("safe");
+  });
+
+  it("maps jsonb/inet/xml/bytea/macaddr to an intrinsic PIIType", () => {
+    expect(pgTypeToPIIType("jsonb")).toBe("jsonb");
+    expect(pgTypeToPIIType("inet")).toBe("ip_address");
+    expect(pgTypeToPIIType("cidr")).toBe("ip_address");
+    expect(pgTypeToPIIType("macaddr")).toBe("mac_address");
+    expect(pgTypeToPIIType("xml")).toBe("xml_text");
+    expect(pgTypeToPIIType("bytea")).toBe("binary_blob");
+    expect(pgTypeToPIIType("text")).toBeNull();
+  });
+
+  it("detects a jsonb column as PII by type alone", () => {
+    const result = detectColumnPII("metadata", "jsonb", []);
+    expect(result.isPII).toBe(true);
+    expect(result.type).toBe("jsonb");
+  });
+
+  it("detects an inet column as ip_address by type alone", () => {
+    const result = detectColumnPII("last_seen_from", "inet", []);
+    expect(result.isPII).toBe(true);
+    expect(result.type).toBe("ip_address");
   });
 });
