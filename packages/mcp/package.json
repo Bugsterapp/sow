@@ -1,6 +1,6 @@
 {
   "name": "@sowdb/mcp",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "sow MCP server: 15 tools for AI agents to manage test database branches",
   "type": "module",
   "license": "MIT",
