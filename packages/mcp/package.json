@@ -1,7 +1,7 @@
 {
   "name": "@sowdb/mcp",
   "version": "0.1.14",
-  "description": "sow MCP server: 15 tools for AI agents to manage test database branches",
+  "description": "sow MCP server — 22 tools for coding agents (Claude Code, Cursor, Codex) to safely manage Postgres sandboxes",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -14,6 +14,12 @@
     "postgres",
     "test-data",
     "ai-agent",
+    "ai-agents",
+    "coding-agents",
+    "claude-code",
+    "cursor",
+    "codex",
+    "sandbox",
     "sow"
   ],
   "main": "./dist/index.js",
