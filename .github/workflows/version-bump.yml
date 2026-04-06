@@ -28,9 +28,29 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Check out with a Personal Access Token (RELEASE_PAT) instead of
+      # the default GITHUB_TOKEN. This matters because GitHub does NOT
+      # trigger workflows on pushes made with GITHUB_TOKEN (intentional
+      # recursion guard). If we used GITHUB_TOKEN here, the tag push at
+      # the bottom of this workflow would silently fail to trigger
+      # release.yml, and the next release would require manually
+      # deleting + re-pushing the tag by hand.
+      #
+      # RELEASE_PAT must be a fine-grained PAT with the following scopes
+      # on this repo:
+      #   - Contents: Read and write  (to push the commit + tag)
+      #   - Metadata: Read            (implicit, always required)
+      # Create one at https://github.com/settings/tokens?type=beta
+      # and add it as a repo secret named RELEASE_PAT.
+      #
+      # Fallback: if RELEASE_PAT is not configured, we use GITHUB_TOKEN.
+      # The bump will still commit + tag + push successfully, but
+      # release.yml will NOT auto-trigger — you'll need to delete and
+      # re-push the tag from your local machine to kick off publish:
+      #   git push origin :refs/tags/v<new> && git push origin v<new>
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
