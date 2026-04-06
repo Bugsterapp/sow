@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { patchEnvFile } from "../env-patch.js";
 import { formatBytes, timeAgo } from "../utils.js";
 import {
   type ProgressEvent,
@@ -86,12 +87,20 @@ export async function runBranch(
         if (flags.export) {
           console.log(`export SOW_URL=${branch.connectionString}`);
         } else if (flags.envFile) {
-          const envContent = `DATABASE_URL=${branch.connectionString}\nSOW_BRANCH=${branch.name}\n`;
           if (flags.append) {
-            appendFileSync(flags.envFile as string, envContent, "utf-8");
-          } else {
-            writeFileSync(flags.envFile as string, envContent, "utf-8");
+            console.error(
+              "  ⚠ --append is deprecated; --env-file now always merges and preserves unrelated keys.",
+            );
           }
+          await patchEnvFile({
+            path: flags.envFile as string,
+            vars: {
+              DATABASE_URL: branch.connectionString,
+              SOW_BRANCH: branch.name,
+            },
+            prompt: false,
+            backup: true,
+          });
           if (isJSON) {
             console.log(JSON.stringify(branch));
           } else if (isQuiet) {
