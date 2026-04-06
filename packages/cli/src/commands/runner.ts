@@ -14,6 +14,8 @@ import {
 import { runConnect, tryConnect, offerDockerStart, promptWithProviderGuidance, resolveConnectionViaDetectionResult } from "./connect.js";
 import { runBranch } from "./branch.js";
 import { runConnectorCmd } from "./connector.js";
+import { runSandbox } from "./sandbox.js";
+import { runEnv } from "./env.js";
 
 function emitJSON(event: ProgressEvent): void {
   console.log(JSON.stringify(event));
@@ -149,6 +151,12 @@ export async function runCommand(
       break;
     case "mcp":
       await runMcp(flags);
+      break;
+    case "sandbox":
+      await runSandbox(connectionString, flags as Parameters<typeof runSandbox>[1], log);
+      break;
+    case "env":
+      await runEnv(subcommand, branchName, flags as Parameters<typeof runEnv>[2]);
       break;
     default:
       log({ type: "error", message: `Unknown command: ${command}. Run sow --help to see available commands.` });
