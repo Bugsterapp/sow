@@ -221,16 +221,9 @@ export async function resetBranch(name: string): Promise<Branch> {
   const initSqlPath = getInitSqlPath(branch.connector);
 
   await provider.resetBranch(branch, initSqlPath);
-
-  if (provider.name === "docker") {
-    // Docker reset = recreate container, so re-run full createBranch
-    removeBranch(name);
-    return createBranch(name, branch.connector, {
-      port: branch.port,
-      pgVersion: (branch.providerMeta as any).pgVersion,
-    });
-  }
-
+  // The Docker provider now resets in-place by dropping & recreating the
+  // branch database from the connector's seed template — no need to tear
+  // down the container or rewrite branch metadata.
   return branch;
 }
 

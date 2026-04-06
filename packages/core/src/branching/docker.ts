@@ -3,9 +3,11 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCb);
 
-const POSTGRES_USER = "sow";
-const POSTGRES_PASSWORD = "sow";
-const POSTGRES_DB = "sow";
+export const POSTGRES_USER = "sow";
+export const POSTGRES_PASSWORD = "sow";
+export const POSTGRES_DB = "sow";
+/** Bootstrap database used to create/drop other databases. */
+export const POSTGRES_BOOTSTRAP_DB = "postgres";
 
 export interface CreateContainerOptions {
   containerName: string;
@@ -233,4 +235,230 @@ export async function execSql(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---------------------------------------------------------------------------
+// New helpers for the template-database model (Lane B / Issue #1).
+// One long-lived container per connector hosts a frozen seed database and
+// N branch databases cloned from it via `CREATE DATABASE ... TEMPLATE seed`.
+// ---------------------------------------------------------------------------
+
+export interface CreateConnectorContainerOptions {
+  containerName: string;
+  port: number;
+  pgVersion: string;
+}
+
+/**
+ * Create a long-lived per-connector Postgres container with no init.sql
+ * mounted. The default `postgres` database is the bootstrap; the seed
+ * and per-branch databases are created later via SQL.
+ */
+export async function createConnectorContainer(
+  opts: CreateConnectorContainerOptions,
+): Promise<string> {
+  const { containerName, port, pgVersion } = opts;
+  const args = [
+    "run",
+    "-d",
+    "--name",
+    containerName,
+    "-p",
+    `${port}:5432`,
+    "-e",
+    `POSTGRES_DB=${POSTGRES_BOOTSTRAP_DB}`,
+    "-e",
+    `POSTGRES_USER=${POSTGRES_USER}`,
+    "-e",
+    `POSTGRES_PASSWORD=${POSTGRES_PASSWORD}`,
+    `postgres:${pgVersion}-alpine`,
+  ];
+  const { stdout } = await execFile("docker", args, { timeout: 30_000 });
+  return stdout.trim();
+}
+
+/**
+ * Wait for the bootstrap `postgres` database inside a connector container
+ * to accept connections.
+ */
+export async function waitForConnectorReady(
+  containerName: string,
+  timeoutMs = 120_000,
+): Promise<void> {
+  const start = Date.now();
+  const pollInterval = 500;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const { stdout } = await execFile(
+        "docker",
+        ["exec", containerName, "pg_isready", "-U", POSTGRES_USER, "-d", POSTGRES_BOOTSTRAP_DB],
+        { timeout: 5_000 },
+      );
+      if (stdout.includes("accepting connections")) {
+        try {
+          await execFile(
+            "docker",
+            ["exec", containerName, "psql", "-U", POSTGRES_USER, "-d", POSTGRES_BOOTSTRAP_DB, "-c", "SELECT 1"],
+            { timeout: 5_000 },
+          );
+          return;
+        } catch {
+          // not ready yet
+        }
+      }
+    } catch {
+      // not ready yet
+    }
+    await sleep(pollInterval);
+  }
+  throw new Error(
+    `Postgres container '${containerName}' did not become ready within ${timeoutMs / 1000}s`,
+  );
+}
+
+/** Run a single SQL statement against a specific database inside a container. */
+export async function execSqlInDb(
+  containerName: string,
+  databaseName: string,
+  sql: string,
+): Promise<string> {
+  const { stdout } = await execFile(
+    "docker",
+    [
+      "exec",
+      containerName,
+      "psql",
+      "-U",
+      POSTGRES_USER,
+      "-d",
+      databaseName,
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      sql,
+    ],
+    { timeout: 60_000 },
+  );
+  return stdout;
+}
+
+/** Stream a SQL file from the host into psql for a given database. */
+export async function loadInitSqlIntoDb(
+  containerName: string,
+  databaseName: string,
+  initSqlPath: string,
+): Promise<void> {
+  const { readFile } = await import("node:fs/promises");
+  const sqlContent = await readFile(initSqlPath, "utf-8");
+  await pipeSqlToDb(containerName, databaseName, sqlContent, /*onErrorStop*/ false);
+}
+
+async function pipeSqlToDb(
+  containerName: string,
+  databaseName: string,
+  sqlContent: string,
+  onErrorStop: boolean,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const args = [
+      "exec",
+      "-i",
+      containerName,
+      "psql",
+      "-U",
+      POSTGRES_USER,
+      "-d",
+      databaseName,
+    ];
+    if (onErrorStop) {
+      args.push("-v", "ON_ERROR_STOP=1");
+    } else {
+      args.push("-v", "ON_ERROR_STOP=0");
+    }
+    const child = spawnCb("docker", args);
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`psql failed (exit ${code}): ${stderr}`));
+      } else {
+        resolve();
+      }
+    });
+    child.on("error", reject);
+    child.stdin.write(sqlContent);
+    child.stdin.end();
+  });
+}
+
+/** Dump a specific database inside a container to a SQL string. */
+export async function dumpDatabase(
+  containerName: string,
+  databaseName: string,
+): Promise<string> {
+  const { stdout } = await execFile(
+    "docker",
+    [
+      "exec",
+      containerName,
+      "pg_dump",
+      "-U",
+      POSTGRES_USER,
+      "-d",
+      databaseName,
+      "--no-owner",
+      "--no-privileges",
+    ],
+    { timeout: 60_000, maxBuffer: 100 * 1024 * 1024 },
+  );
+  return stdout;
+}
+
+/**
+ * Restore a SQL dump into a branch database. Wipes the public schema first.
+ * Targets the per-branch database (NOT the seed).
+ */
+export async function restoreDumpToDatabase(
+  containerName: string,
+  databaseName: string,
+  sqlContent: string,
+): Promise<void> {
+  await execSqlInDb(
+    containerName,
+    databaseName,
+    "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;",
+  );
+  await pipeSqlToDb(containerName, databaseName, sqlContent, /*onErrorStop*/ false);
+}
+
+/**
+ * List database names matching a SQL LIKE pattern (used to count branches
+ * remaining for a connector before tearing down its container).
+ */
+export async function listDatabases(
+  containerName: string,
+  likePattern: string,
+): Promise<string[]> {
+  const { stdout } = await execFile(
+    "docker",
+    [
+      "exec",
+      containerName,
+      "psql",
+      "-U",
+      POSTGRES_USER,
+      "-d",
+      POSTGRES_BOOTSTRAP_DB,
+      "-tA",
+      "-c",
+      `SELECT datname FROM pg_database WHERE datname LIKE '${likePattern.replace(/'/g, "''")}'`,
+    ],
+    { timeout: 10_000 },
+  );
+  return stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
