@@ -287,6 +287,11 @@ export async function runConnect(
             console.log(`  ℹ ${result.piiColumnsDetected} PII columns detected (sanitization disabled)`);
           }
         }
+        if (result.integrityWarningsCount > 0) {
+          console.log(
+            `  ⚠ ${result.integrityWarningsCount} referential integrity warning(s) — run \`sow doctor ${result.name}\` for details`,
+          );
+        }
         console.log();
         console.log("  Next step — create an isolated branch to work with:");
         console.log(`    $ sow branch create dev`);

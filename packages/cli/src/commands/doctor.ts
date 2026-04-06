@@ -2,8 +2,10 @@ import {
   listConnectors,
   listBranches,
   getSowDir,
+  getConnectorMetadata,
   type ConnectorInfo,
   type Branch,
+  type IntegrityWarning,
 } from "@sowdb/core";
 import { execSync } from "node:child_process";
 import { existsSync, accessSync, constants, statSync, readdirSync, readFileSync } from "node:fs";
@@ -130,6 +132,21 @@ function checkConnectors(connectors: ConnectorInfo[]): CheckResult[] {
       };
     }
     const size = statSync(initSql).size;
+
+    // If the connector has integrity warnings from sampling, surface that
+    // so users know to run `sow doctor <name>` for the full list rather
+    // than discovering it the hard way via a dangling FK in the sandbox.
+    const meta = getConnectorMetadata(c.name);
+    const warningCount = meta?.integrityWarnings?.length ?? 0;
+    if (warningCount > 0) {
+      return {
+        name: `Connector "${c.name}" has ${warningCount} integrity warning(s)`,
+        status: "warn" as const,
+        detail: `snapshot: ${formatBytes(size)}, created ${c.createdAt ? timeAgo(c.createdAt) : "unknown"}`,
+        hint: `Run: sow doctor ${c.name}`,
+      };
+    }
+
     return {
       name: `Connector "${c.name}" healthy`,
       status: "pass" as const,
@@ -239,6 +256,44 @@ function getDiskUsage(): CheckResult {
   walk(dir);
 
   return { name: "Disk usage", status: "pass", detail: formatBytes(total) };
+}
+
+export interface ConnectorWarningsReport {
+  found: boolean;
+  name: string;
+  tables: number;
+  rows: number;
+  snapshotSize: string;
+  warnings: IntegrityWarning[];
+}
+
+/**
+ * Fetch a per-connector report of referential-integrity warnings.
+ * Used by `sow doctor <connector-name>` to drill into the warnings
+ * that `sow connect` summarized as a count on the result line.
+ */
+export function describeConnectorWarnings(
+  connectorName: string,
+): ConnectorWarningsReport {
+  const meta = getConnectorMetadata(connectorName);
+  if (!meta) {
+    return {
+      found: false,
+      name: connectorName,
+      tables: 0,
+      rows: 0,
+      snapshotSize: "0 B",
+      warnings: [],
+    };
+  }
+  return {
+    found: true,
+    name: meta.name,
+    tables: meta.tables,
+    rows: meta.rows,
+    snapshotSize: formatBytes(meta.sizeBytes),
+    warnings: meta.integrityWarnings ?? [],
+  };
 }
 
 export async function runDoctorChecks(): Promise<CheckResult[]> {

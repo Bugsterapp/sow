@@ -147,7 +147,7 @@ export async function runCommand(
       await runAnalyze(resolvedConn, flags, log, merged);
       break;
     case "doctor":
-      await runDoctor(flags);
+      await runDoctor(flags, connectionString);
       break;
     case "mcp":
       await runMcp(flags);
@@ -221,8 +221,50 @@ async function runAnalyze(
   }
 }
 
-async function runDoctor(flags: Record<string, unknown>): Promise<void> {
-  const { runDoctorChecks } = await import("./doctor.js");
+async function runDoctor(
+  flags: Record<string, unknown>,
+  connectorName?: string,
+): Promise<void> {
+  const { runDoctorChecks, describeConnectorWarnings } = await import("./doctor.js");
+
+  // If a connector name was passed, print a detailed warnings report
+  // for that connector instead of the generic system checks.
+  if (connectorName) {
+    const report = describeConnectorWarnings(connectorName);
+    if (flags.json) {
+      console.log(JSON.stringify(report));
+      return;
+    }
+    if (!report.found) {
+      console.error(`  ✗ Connector "${connectorName}" not found.`);
+      process.exit(1);
+    }
+    console.log();
+    console.log(`  Connector "${connectorName}"`);
+    console.log(`  ${report.tables} tables, ${report.rows.toLocaleString()} rows, snapshot ${report.snapshotSize}`);
+    console.log();
+    if (report.warnings.length === 0) {
+      console.log("  ✓ No referential integrity warnings — every FK resolved cleanly.");
+      return;
+    }
+    console.log(`  ⚠ ${report.warnings.length} referential integrity warning(s):`);
+    console.log();
+    for (const w of report.warnings) {
+      const src = w.sourceTable
+        ? `${w.sourceTable}.${(w.sourceColumns ?? []).join(",")}`
+        : "(implicit)";
+      const tgt = `${w.targetTable}${w.targetColumns ? "." + w.targetColumns.join(",") : ""}`;
+      console.log(`    • [${w.kind}] ${src} → ${tgt}`);
+      console.log(`      ${w.reason}`);
+    }
+    console.log();
+    console.log("  These FKs may be dangling in the sandbox. Root causes vary:");
+    console.log("    - `parent_not_found`: the source DB itself has orphaned rows");
+    console.log("    - `*_fetch_failed`: a transient read error hit the sampler");
+    console.log("  Run `sow connector refresh <name>` to retry sampling.");
+    return;
+  }
+
   const checks = await runDoctorChecks();
 
   if (flags.json) {
