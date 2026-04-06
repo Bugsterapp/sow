@@ -1,0 +1,111 @@
+name: Version Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: 'Semver bump level'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - prerelease
+      prerelease_tag:
+        description: 'Prerelease identifier (only used when level=prerelease)'
+        required: false
+        default: 'rc'
+        type: string
+
+concurrency:
+  group: version-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Compute new version
+        id: bump
+        env:
+          LEVEL: ${{ inputs.level }}
+          PRE_TAG: ${{ inputs.prerelease_tag }}
+        run: |
+          set -e
+          NEW_VERSION=$(node -e "
+            const fs = require('fs');
+            const cur = JSON.parse(fs.readFileSync('./packages/core/package.json', 'utf8')).version;
+            const level = process.env.LEVEL;
+            const preTag = process.env.PRE_TAG || 'rc';
+            const m = cur.match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?\$/);
+            if (!m) { console.error('Cannot parse version: ' + cur); process.exit(1); }
+            let [_, MA, MI, PA, PRE] = m;
+            MA = +MA; MI = +MI; PA = +PA;
+            let out;
+            if (level === 'major') { out = \`\${MA+1}.0.0\`; }
+            else if (level === 'minor') { out = \`\${MA}.\${MI+1}.0\`; }
+            else if (level === 'patch') { out = \`\${MA}.\${MI}.\${PA+1}\`; }
+            else if (level === 'prerelease') {
+              if (PRE) {
+                const pm = PRE.match(/^(.*?)\.(\d+)\$/);
+                if (pm && pm[1] === preTag) {
+                  out = \`\${MA}.\${MI}.\${PA}-\${preTag}.\${+pm[2]+1}\`;
+                } else {
+                  out = \`\${MA}.\${MI}.\${PA}-\${preTag}.0\`;
+                }
+              } else {
+                out = \`\${MA}.\${MI}.\${PA+1}-\${preTag}.0\`;
+              }
+            } else {
+              console.error('Unknown level: ' + level); process.exit(1);
+            }
+            console.log(out);
+          ")
+          echo "Current -> New: $NEW_VERSION"
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Write new version to all packages
+        run: |
+          set -e
+          for pkg in core cli mcp; do
+            node -e "
+              const fs = require('fs');
+              const path = './packages/$pkg/package.json';
+              const p = JSON.parse(fs.readFileSync(path, 'utf8'));
+              p.version = '${NEW_VERSION}';
+              fs.writeFileSync(path, JSON.stringify(p, null, 2) + '\n');
+            "
+          done
+
+      - name: Verify tag does not already exist
+        run: |
+          if git rev-parse "v${NEW_VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag v${NEW_VERSION} already exists. Aborting."
+            exit 1
+          fi
+
+      - name: Commit, tag, and push
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/core/package.json packages/cli/package.json packages/mcp/package.json
+          git commit -m "chore: bump version to v${NEW_VERSION}"
+          git tag "v${NEW_VERSION}"
+          git push origin HEAD:${GITHUB_REF_NAME} "v${NEW_VERSION}"
+          echo "Pushed v${NEW_VERSION}. release.yml will now publish."
