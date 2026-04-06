@@ -1,6 +1,6 @@
 {
   "name": "@sowdb/mcp",
-  "version": "0.1.14",
+  "version": "0.2.0",
   "description": "sow MCP server — 22 tools for coding agents (Claude Code, Cursor, Codex) to safely manage Postgres sandboxes",
   "type": "module",
   "license": "MIT",
