@@ -1,0 +1,39 @@
+name: Binaries
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            artifact: sow-linux-x64
+          - os: macos-latest
+            target: bun-darwin-arm64
+            artifact: sow-darwin-arm64
+          - os: macos-13
+            target: bun-darwin-x64
+            artifact: sow-darwin-x64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+
+      - run: bun build packages/cli/dist/cli.js --compile --target=${{ matrix.target }} --outfile ${{ matrix.artifact }}
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}
