@@ -1,6 +1,6 @@
 {
   "name": "@sowdb/cli",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Safe test databases from production Postgres",
   "type": "module",
   "license": "MIT",
