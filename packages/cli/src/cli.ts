@@ -22,6 +22,8 @@ Options:
   --exclude <tables>            Comma-separated tables to exclude
   --full                        Copy all rows (no sampling, slower but complete)
     --no-sanitize                 Skip PII sanitization
+  --allow-unsafe                NULL out columns with unknown Postgres types
+                                instead of aborting (default: abort)
   -c, --config <path>           Path to .sow.yml config file
   --json                        Output as JSON events (for agents)
   -q, --quiet                   Minimal output, no spinners
@@ -97,6 +99,7 @@ Examples:
       exclude: { type: "string" },
       full: { type: "boolean", default: false },
       noSanitize: { type: "boolean", default: false },
+      allowUnsafe: { type: "boolean", default: false },
       config: { type: "string", shortFlag: "c" },
       json: { type: "boolean", default: false },
       quiet: { type: "boolean", shortFlag: "q", default: false },

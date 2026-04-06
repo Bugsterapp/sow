@@ -6,7 +6,7 @@ export { analyze } from "./analyzer/index.js";
 export type { AnalyzeOptions } from "./analyzer/index.js";
 export { createSampler } from "./sampler/index.js";
 export type { SamplerOptions } from "./sampler/index.js";
-export { createSanitizer } from "./sanitizer/index.js";
+export { createSanitizer, SanitizationAbort } from "./sanitizer/index.js";
 export type { SanitizerOptions } from "./sanitizer/index.js";
 export { createExporter } from "./exporter/index.js";
 export type { ExporterOptions } from "./exporter/index.js";

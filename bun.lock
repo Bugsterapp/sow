@@ -18,7 +18,7 @@
     },
     "packages/cli": {
       "name": "@sowdb/cli",
-      "version": "0.1.9",
+      "version": "0.1.14",
       "bin": {
         "sow": "dist/cli.js",
       },
@@ -35,7 +35,7 @@
     },
     "packages/core": {
       "name": "@sowdb/core",
-      "version": "0.1.9",
+      "version": "0.1.14",
       "dependencies": {
         "@faker-js/faker": "^9.6.0",
         "better-sqlite3": "^11.9.0",
@@ -53,7 +53,7 @@
     },
     "packages/mcp": {
       "name": "@sowdb/mcp",
-      "version": "0.1.9",
+      "version": "0.1.14",
       "bin": {
         "sow-mcp": "./dist/index.js",
       },

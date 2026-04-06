@@ -67,6 +67,7 @@ export async function createConnector(
       enabled: !opts.noSanitize,
       rules: [] as { table: string; column: string; type: any }[],
       skipColumns: [] as string[],
+      allowUnsafe: !!opts.allowUnsafe,
     };
 
     if (!opts.noSanitize) {
@@ -75,6 +76,7 @@ export async function createConnector(
     const sanitizer = createSanitizer({
       config: sanitizationConfig,
       tables: analysis.schema.tables,
+      enumTypes: analysis.schema.enums,
       onProgress,
     });
     const sanitized = sanitizer.sanitize(sampled.tables);
