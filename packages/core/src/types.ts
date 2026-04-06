@@ -140,11 +140,17 @@ export type PIIType =
   | "ssn"
   | "credit_card"
   | "ip"
+  | "ip_address"
+  | "mac_address"
   | "url"
   | "uuid"
   | "date_of_birth"
   | "password"
   | "free_text"
+  | "jsonb"
+  | "xml_text"
+  | "binary_blob"
+  | "passthrough"
   | "custom";
 
 export type PIIConfidence = "high" | "medium" | "low" | "uncertain";
@@ -271,6 +277,18 @@ export interface SanitizationConfig {
   enabled: boolean;
   rules: SanitizationRule[];
   skipColumns: string[];
+  /**
+   * When true, columns with unknown Postgres types are NULLed out rather
+   * than aborting. When false (default), sanitize() throws SanitizationAbort.
+   */
+  allowUnsafe?: boolean;
+}
+
+export interface UnhandledColumn {
+  table: string;
+  column: string;
+  pgType: string;
+  reason: string;
 }
 
 export interface SanitizationRule {
@@ -290,6 +308,14 @@ export interface SanitizationResult {
   tables: SanitizedTable[];
   rulesApplied: SanitizationRule[];
   columnsSkipped: string[];
+  /**
+   * Columns whose Postgres type the sanitizer could not verify.
+   * Populated whenever allowUnsafe is true (these columns are NULLed).
+   * Empty when allowUnsafe is false (sanitize() will throw instead).
+   */
+  unhandledColumns?: UnhandledColumn[];
+  /** Human-readable warnings surfaced by the sanitizer (for `sow doctor`). */
+  warnings?: string[];
 }
 
 // ---------------------------------------------------------------------------
