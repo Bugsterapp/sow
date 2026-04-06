@@ -119,15 +119,24 @@ export async function loadIntoSupabase(
       // (e.g. a double quote from a quoted DDL identifier in the source
       // schema) must not break out of our identifier quoting.
       const quotedTable = quoteIdent(tableName);
-      try {
-        // Parameterize the value `tableName` in information_schema lookups.
-        // Identifiers (the policy name, the qualified table reference) are
-        // quoted via quoteIdent because SQL binds values only, not names.
-        const cols = await sql.unsafe(
-          "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name IN ('user_id', 'owner_id', 'created_by')",
+
+      // Introspection queries run outside the try/catch below so that a
+      // transient read error cannot end up in the policy-disable fallback.
+      // Values are bound via $1; identifiers use quoteIdent for DDL.
+      const cols = await sql.unsafe(
+        "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name IN ('user_id', 'owner_id', 'created_by')",
+        [tableName] as unknown as Parameters<typeof sql.unsafe>[1],
+      );
+
+      let hasProjId: unknown[] = [];
+      if (cols.length === 0) {
+        hasProjId = await sql.unsafe(
+          "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = 'project_id' LIMIT 1",
           [tableName] as unknown as Parameters<typeof sql.unsafe>[1],
         );
+      }
 
+      try {
         await sql.unsafe(`ALTER TABLE public.${quotedTable} ENABLE ROW LEVEL SECURITY`);
 
         if (cols.length > 0) {
@@ -136,23 +145,20 @@ export async function loadIntoSupabase(
           await sql.unsafe(
             `CREATE POLICY "sow_owner" ON public.${quotedTable} FOR ALL USING (${quotedUserCol} = auth.uid())`,
           );
-        } else {
-          const hasProjId = await sql.unsafe(
-            "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = 'project_id' LIMIT 1",
-            [tableName] as unknown as Parameters<typeof sql.unsafe>[1],
+        } else if (hasProjId.length > 0) {
+          await sql.unsafe(
+            `CREATE POLICY "sow_project" ON public.${quotedTable} FOR ALL USING (project_id IN (SELECT id FROM public.projects WHERE user_id = auth.uid()))`,
           );
-
-          if (hasProjId.length > 0) {
-            await sql.unsafe(
-              `CREATE POLICY "sow_project" ON public.${quotedTable} FOR ALL USING (project_id IN (SELECT id FROM public.projects WHERE user_id = auth.uid()))`,
-            );
-          } else {
-            await sql.unsafe(
-              `CREATE POLICY "sow_open" ON public.${quotedTable} FOR ALL USING (auth.role() = 'authenticated')`,
-            );
-          }
+        } else {
+          await sql.unsafe(
+            `CREATE POLICY "sow_open" ON public.${quotedTable} FOR ALL USING (auth.role() = 'authenticated')`,
+          );
         }
       } catch {
+        // Policy creation failed (e.g. the table has a conflicting existing
+        // policy, or ENABLE RLS failed). Disable RLS so the dev can still
+        // use the sandbox table. This is a dev-sandbox fallback, not a
+        // production concession — branches are sanitized and ephemeral.
         try {
           await sql.unsafe(`ALTER TABLE public.${quotedTable} DISABLE ROW LEVEL SECURITY`);
         } catch { /* ignore */ }

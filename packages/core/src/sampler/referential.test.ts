@@ -1,7 +1,5 @@
-import {
-  ensureReferentialIntegrity,
-  quoteIdent,
-} from "./referential.js";
+import { ensureReferentialIntegrity } from "./referential.js";
+import { quoteIdent } from "../sql/identifiers.js";
 import type {
   DatabaseAdapter,
   Relationship,
@@ -41,8 +39,12 @@ describe("quoteIdent", () => {
     );
   });
 
-  it("handles empty string", () => {
-    expect(quoteIdent("")).toBe('""');
+  it("throws on empty string (would produce an invalid identifier)", () => {
+    expect(() => quoteIdent("")).toThrow(/cannot be empty/);
+  });
+
+  it("throws on NUL byte (libpq rejects these at a distant layer)", () => {
+    expect(() => quoteIdent("users\0evil")).toThrow(/NUL byte/);
   });
 });
 

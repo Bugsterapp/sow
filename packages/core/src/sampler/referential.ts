@@ -1,9 +1,6 @@
 import type { DatabaseAdapter, Relationship } from "../types.js";
 import { quoteIdent } from "../sql/identifiers.js";
 
-// Re-export so existing test imports keep working.
-export { quoteIdent };
-
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Columns already handled by formal FKs or that shouldn't be followed

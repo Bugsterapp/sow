@@ -19,5 +19,14 @@
  * quoteIdent('x"; DROP x; --') // => '"x""; DROP x; --"'  (inert)
  */
 export function quoteIdent(name: string): string {
+  if (name.length === 0) {
+    throw new Error("quoteIdent: identifier cannot be empty");
+  }
+  // NUL is explicitly forbidden in Postgres identifiers and can cause
+  // protocol-level confusion. Fail loudly rather than let libpq reject it
+  // at a point far from the call site.
+  if (name.includes("\0")) {
+    throw new Error("quoteIdent: identifier cannot contain NUL byte");
+  }
   return '"' + name.replace(/"/g, '""') + '"';
 }
