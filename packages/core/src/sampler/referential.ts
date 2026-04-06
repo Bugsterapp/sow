@@ -1,10 +1,11 @@
-import type { DatabaseAdapter, Relationship } from "../types.js";
+import type {
+  DatabaseAdapter,
+  IntegrityWarning,
+  Relationship,
+} from "../types.js";
 import { quoteIdent } from "../sql/identifiers.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// Columns already handled by formal FKs or that shouldn't be followed
-const SKIP_IMPLICIT_COLUMNS = new Set(["id", "user_id", "owner_id", "created_by"]);
 
 /**
  * Infer which table a column like `session_id` or `run_id` references.
@@ -36,18 +37,56 @@ function inferTargetTable(
   return null;
 }
 
+function truncateReason(err: unknown, limit = 140): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.length > limit ? msg.slice(0, limit - 1) + "…" : msg;
+}
+
+/**
+ * Result of a referential integrity pass.
+ *
+ * Includes both the fixed-up sampled tables and a list of any problems
+ * encountered. Problems are intentionally non-fatal: the sandbox still
+ * loads, but the connector metadata records what we couldn't resolve
+ * so `sow doctor` can surface it to the user.
+ */
+export interface ReferentialIntegrityResult {
+  tables: Map<string, Record<string, unknown>[]>;
+  warnings: IntegrityWarning[];
+}
+
 /**
  * Ensure referential integrity in the sampled data.
  * Handles both formal FK constraints and implicit UUID references.
+ *
+ * Returns the fixed-up table map plus a list of warnings for any FK
+ * relationships we couldn't fully resolve. The caller decides whether
+ * to surface them (via `sow doctor`) or fail hard.
  */
 export async function ensureReferentialIntegrity(
   adapter: DatabaseAdapter,
   sampledTables: Map<string, Record<string, unknown>[]>,
   relationships: Relationship[],
-): Promise<Map<string, Record<string, unknown>[]>> {
+): Promise<ReferentialIntegrityResult> {
   const result = new Map(
     Array.from(sampledTables.entries()).map(([k, v]) => [k, [...v]]),
   );
+  const warnings: IntegrityWarning[] = [];
+  // Dedupe warnings by relationship+target so we emit one line per
+  // (source, target) pair even if many child rows have orphaned FKs.
+  const warnedRelationships = new Set<string>();
+
+  // Build the set of (table, column) pairs already handled by the formal-FK
+  // pass. The implicit-reference pass below must not revisit these, otherwise
+  // it would issue redundant queries and potentially mask failures. This
+  // replaces a hardcoded English-biased skip list (`id`, `user_id`, ...).
+  const formallyHandled = new Set<string>();
+  for (const rel of relationships) {
+    if (rel.sourceTable === rel.targetTable) continue;
+    for (const col of rel.sourceColumns) {
+      formallyHandled.add(`${rel.sourceTable}.${col}`);
+    }
+  }
 
   // Multiple passes to handle transitive dependencies
   for (let pass = 0; pass < 3; pass++) {
@@ -88,8 +127,8 @@ export async function ensureReferentialIntegrity(
 
           try {
             // Identifiers are quoted (not parameterizable in Postgres);
-            // values go through $1,$2,... bind parameters. This is safe
-            // against a text PK like "O'Brien" and against crafted payloads.
+            // values go through $1,$2,... bind parameters. Safe against a
+            // text PK like "O'Brien" and against crafted payloads.
             const conditions = rel.targetColumns
               .map((col, i) => `${quoteIdent(col)} = $${i + 1}`)
               .join(" AND ");
@@ -103,9 +142,33 @@ export async function ensureReferentialIntegrity(
               existing.push(rows[0] as Record<string, unknown>);
               result.set(rel.targetTable, existing);
               changed = true;
+            } else {
+              // Genuine miss: the source data references a parent that
+              // does not exist in the source DB. Dedupe by relationship
+              // name so we don't flood when many child rows reference
+              // the same orphaned parent.
+              const fingerprint = `parent_not_found:${rel.sourceTable}.${rel.sourceColumns.join(",")}->${rel.targetTable}`;
+              if (!warnedRelationships.has(fingerprint)) {
+                warnedRelationships.add(fingerprint);
+                warnings.push({
+                  kind: "parent_not_found",
+                  sourceTable: rel.sourceTable,
+                  sourceColumns: rel.sourceColumns,
+                  targetTable: rel.targetTable,
+                  targetColumns: rel.targetColumns,
+                  reason: `No parent row found for FK value (${rel.targetColumns.length} column(s))`,
+                });
+              }
             }
-          } catch {
-            // Best effort
+          } catch (err) {
+            warnings.push({
+              kind: "parent_fetch_failed",
+              sourceTable: rel.sourceTable,
+              sourceColumns: rel.sourceColumns,
+              targetTable: rel.targetTable,
+              targetColumns: rel.targetColumns,
+              reason: truncateReason(err),
+            });
           }
         }
       }
@@ -142,8 +205,15 @@ export async function ensureReferentialIntegrity(
                 result.set(rel.sourceTable, existing);
                 changed = true;
               }
-            } catch {
-              // Best effort
+            } catch (err) {
+              warnings.push({
+                kind: "child_fetch_failed",
+                sourceTable: rel.sourceTable,
+                sourceColumns: rel.sourceColumns,
+                targetTable: rel.targetTable,
+                targetColumns: rel.targetColumns,
+                reason: truncateReason(err),
+              });
             }
           }
         }
@@ -154,81 +224,99 @@ export async function ensureReferentialIntegrity(
   }
 
   // Second pass: follow implicit FK references (UUID columns ending in _id)
-  await resolveImplicitReferences(adapter, result);
+  await resolveImplicitReferences(
+    adapter,
+    result,
+    formallyHandled,
+    warnings,
+  );
 
-  return result;
+  return { tables: result, warnings };
 }
 
 /**
  * Detect implicit FK references by finding UUID columns named *_id
  * and fetching any missing referenced rows from inferred target tables.
+ *
+ * Batches queries by target table: for a 50-table schema with many
+ * `_id` columns, the pre-batch version would fire one query per
+ * (source_table, source_column) pair even when multiple sources
+ * reference the same parent. The batched version collects all missing
+ * ids per target table across ALL source tables, then issues one
+ * `IN ($1, $2, ...)` query per target. This cuts `sow connect` time
+ * from ~30-60s (remote VPN) to a single round-trip per target.
  */
 async function resolveImplicitReferences(
   adapter: DatabaseAdapter,
   result: Map<string, Record<string, unknown>[]>,
+  formallyHandled: Set<string>,
+  warnings: IntegrityWarning[],
 ): Promise<void> {
   const allTableNames = new Set(result.keys());
 
-  // Collect all formal FK column pairs to avoid duplicating work
-  const handledPairs = new Set<string>();
+  // Collect all missing ids grouped by target table. A single target
+  // table may be referenced by many source tables; we want one query
+  // per target, not one query per source-target pair.
+  const missingByTarget = new Map<string, Set<string>>();
 
   for (const [tableName, rows] of result.entries()) {
     if (rows.length === 0) continue;
 
     const sampleRow = rows[0];
     for (const colName of Object.keys(sampleRow)) {
-      if (!colName.endsWith("_id") || SKIP_IMPLICIT_COLUMNS.has(colName)) continue;
+      if (!colName.endsWith("_id")) continue;
+
+      // Skip columns already handled by a formal FK. This replaces the
+      // old hardcoded English-biased list (["id","user_id","owner_id",
+      // "created_by"]) with a dynamic check computed from the actual
+      // schema relationships, so non-English column names and unusual
+      // FK layouts work correctly.
+      if (formallyHandled.has(`${tableName}.${colName}`)) continue;
 
       const targetTable = inferTargetTable(colName, allTableNames);
       if (!targetTable) continue;
 
-      const pairKey = `${tableName}.${colName}->${targetTable}`;
-      if (handledPairs.has(pairKey)) continue;
-      handledPairs.add(pairKey);
-
       const targetRows = result.get(targetTable) || [];
-      const targetIds = new Set(
-        targetRows.map((r) => String(r.id ?? "")),
-      );
+      const targetIds = new Set(targetRows.map((r) => String(r.id ?? "")));
 
-      // Find referenced IDs that are missing from the target table
-      const missingIds = new Set<string>();
       for (const row of rows) {
         const val = String(row[colName] ?? "");
         if (val && UUID_RE.test(val) && !targetIds.has(val)) {
-          missingIds.add(val);
-        }
-      }
-
-      if (missingIds.size === 0) continue;
-
-      // Batch fetch missing rows (up to 100 at a time)
-      const idBatches: string[][] = [];
-      const allMissing = Array.from(missingIds);
-      for (let i = 0; i < allMissing.length; i += 100) {
-        idBatches.push(allMissing.slice(i, i + 100));
-      }
-
-      for (const batch of idBatches) {
-        try {
-          // Build placeholder list ($1,$2,...) the same length as the batch.
-          // Each value is already guaranteed UUID-shaped by the gate above,
-          // but parameterization is the correct discipline regardless.
-          const placeholders = batch
-            .map((_, i) => `$${i + 1}`)
-            .join(",");
-          const fetched = await adapter.query(
-            `SELECT * FROM ${quoteIdent(targetTable)} WHERE id IN (${placeholders})`,
-            batch,
-          );
-          if (fetched.length > 0) {
-            const existing = result.get(targetTable) || [];
-            existing.push(...(fetched as Record<string, unknown>[]));
-            result.set(targetTable, existing);
+          if (!missingByTarget.has(targetTable)) {
+            missingByTarget.set(targetTable, new Set());
           }
-        } catch {
-          // Best effort — table might not have an id column or query might fail
+          missingByTarget.get(targetTable)!.add(val);
         }
+      }
+    }
+  }
+
+  // One batched query per target table.
+  for (const [targetTable, missingSet] of missingByTarget.entries()) {
+    const allMissing = Array.from(missingSet);
+    if (allMissing.length === 0) continue;
+
+    // Chunk into batches of 100 to keep prepared-statement sizes sane
+    // and well under Postgres's 65,535 bind-parameter limit.
+    for (let i = 0; i < allMissing.length; i += 100) {
+      const batch = allMissing.slice(i, i + 100);
+      try {
+        const placeholders = batch.map((_, idx) => `$${idx + 1}`).join(",");
+        const fetched = await adapter.query(
+          `SELECT * FROM ${quoteIdent(targetTable)} WHERE id IN (${placeholders})`,
+          batch,
+        );
+        if (fetched.length > 0) {
+          const existing = result.get(targetTable) || [];
+          existing.push(...(fetched as Record<string, unknown>[]));
+          result.set(targetTable, existing);
+        }
+      } catch (err) {
+        warnings.push({
+          kind: "implicit_ref_fetch_failed",
+          targetTable,
+          reason: truncateReason(err),
+        });
       }
     }
   }

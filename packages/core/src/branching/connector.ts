@@ -126,6 +126,10 @@ export async function createConnector(
       sanitizationConfig,
       analysis,
       authUsers: providerAuthUsers,
+      integrityWarnings:
+        sampled.integrityWarnings && sampled.integrityWarnings.length > 0
+          ? sampled.integrityWarnings
+          : undefined,
     };
 
     writeConnectorMetadata(name, metadata);
@@ -143,6 +147,7 @@ export async function createConnector(
       piiColumnsDetected: metadata.piiColumnsDetected,
       sizeBytes: result.totalSize,
       snapshotPath: snapshotDir,
+      integrityWarningsCount: sampled.integrityWarnings?.length ?? 0,
     };
   } finally {
     await adapter.disconnect();

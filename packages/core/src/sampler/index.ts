@@ -148,13 +148,14 @@ export function createSampler(options: SamplerOptions) {
       if (rows) sampledMap.set(tableName, rows);
     }
 
-    const integrityFixed = isFullCopy
-      ? sampledMap
+    const integrityResult = isFullCopy
+      ? { tables: sampledMap, warnings: [] }
       : await ensureReferentialIntegrity(
           adapter,
           sampledMap,
           analysis.schema.relationships,
         );
+    const integrityFixed = integrityResult.tables;
 
     const sampledTables: SampledTable[] = [];
     for (const tableName of tablesToSample) {
@@ -173,7 +174,11 @@ export function createSampler(options: SamplerOptions) {
       });
     }
 
-    return { tables: sampledTables, config };
+    return {
+      tables: sampledTables,
+      config,
+      integrityWarnings: integrityResult.warnings,
+    };
   }
 
   return { sample };

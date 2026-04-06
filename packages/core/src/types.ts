@@ -261,6 +261,30 @@ export interface SampledTable {
 export interface SamplingResult {
   tables: SampledTable[];
   config: SamplingConfig;
+  /**
+   * Non-fatal problems encountered while ensuring referential integrity.
+   * Each entry describes an FK relationship that could not be fully resolved.
+   * The sample still completed; these rows may have dangling foreign keys.
+   * Surfaced by `sow doctor <connector>` so users know what isn't guaranteed.
+   */
+  integrityWarnings: IntegrityWarning[];
+}
+
+/** A non-fatal referential-integrity problem captured during sampling. */
+export interface IntegrityWarning {
+  kind:
+    | "parent_fetch_failed"
+    | "parent_not_found"
+    | "child_fetch_failed"
+    | "implicit_ref_fetch_failed";
+  /** The source (child) table and column(s) involved, if any. */
+  sourceTable?: string;
+  sourceColumns?: string[];
+  /** The target (parent) table and column(s) being resolved. */
+  targetTable: string;
+  targetColumns?: string[];
+  /** Short, human-readable summary (no secrets, no raw values). */
+  reason: string;
 }
 
 // ---------------------------------------------------------------------------

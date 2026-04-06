@@ -1,4 +1,9 @@
-import type { AnalysisResult, SamplingConfig, SanitizationConfig } from "../types.js";
+import type {
+  AnalysisResult,
+  IntegrityWarning,
+  SamplingConfig,
+  SanitizationConfig,
+} from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Branch — an isolated database managed by a provider (Docker, Supabase, etc.)
@@ -50,6 +55,14 @@ export interface ConnectorMetadata {
   analysis: AnalysisResult;
   /** Auth user mappings for Supabase projects (original UUID -> sanitized email). */
   authUsers?: AuthUserMapping[];
+  /**
+   * Non-fatal referential-integrity warnings captured during the sample.
+   * These are surfaced by `sow doctor <connector>` so users know which
+   * FK relationships couldn't be fully resolved without having to re-run
+   * the whole connect flow. Optional for backwards compat with metadata
+   * written by earlier sow versions.
+   */
+  integrityWarnings?: IntegrityWarning[];
 }
 
 export interface ConnectorInfo {
@@ -77,6 +90,12 @@ export interface ConnectorCreateResult {
   piiColumnsDetected: number;
   sizeBytes: number;
   snapshotPath: string;
+  /**
+   * Count of non-fatal referential-integrity warnings from the sampler.
+   * Zero when everything resolved cleanly. When non-zero, the CLI prints
+   * a summary and the user can run `sow doctor <name>` for the full list.
+   */
+  integrityWarningsCount: number;
 }
 
 // ---------------------------------------------------------------------------
