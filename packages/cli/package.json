@@ -1,0 +1,50 @@
+{
+  "name": "@sowdb/cli",
+  "version": "0.1.10",
+  "description": "Safe test databases from production Postgres",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bugsterapp/sow.git",
+    "directory": "packages/cli"
+  },
+  "keywords": [
+    "cli",
+    "postgres",
+    "test-data",
+    "database",
+    "docker",
+    "sow",
+    "pii",
+    "sanitize"
+  ],
+  "bin": {
+    "sow": "dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "files": [
+    "dist",
+    "scripts",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "postinstall": "node ./scripts/postinstall.js"
+  },
+  "dependencies": {
+    "@sowdb/core": "workspace:*",
+    "meow": "^13.0.0",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "tsup": "^8.4.0",
+    "@types/node": "^22.0.0"
+  }
+}

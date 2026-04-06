@@ -1,0 +1,25 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+
+.next/
+out/
+
+*.sqlite
+sow-output/
+.sow/
+.seedb/
+.sow.yml
+
+.DS_Store
+*.log
+skills-lock.json
+
+# Dev skills (local only, not for end users)
+.agents/dev-skills/
+.claude/skills/

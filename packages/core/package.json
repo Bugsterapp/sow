@@ -1,0 +1,54 @@
+{
+  "name": "@sowdb/core",
+  "version": "0.1.10",
+  "description": "sow core engine: analyze, sample, sanitize, and branch Postgres databases",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bugsterapp/sow.git",
+    "directory": "packages/core"
+  },
+  "keywords": [
+    "postgres",
+    "test-data",
+    "database",
+    "sanitize",
+    "pii",
+    "sow"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "postgres": "^3.4.5",
+    "@faker-js/faker": "^9.6.0",
+    "better-sqlite3": "^11.9.0",
+    "zod": "^3.24.0",
+    "yaml": "^2.7.0",
+    "nanoid": "^5.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "tsup": "^8.4.0",
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

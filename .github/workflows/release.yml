@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Skip release commits to avoid infinite loop
+    if: "!startsWith(github.event.head_commit.message, 'release:')"
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+
+      - run: bun run test
+
+      - name: Configure npm auth
+        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version and publish
+        run: |
+          set -e
+          ROOT_DIR=$(pwd)
+
+          VERSION=$(node -p "require('./packages/core/package.json').version")
+          NEW_VERSION=$(node -p "const v='$VERSION'.split('.'); v[2]=+v[2]+1; v.join('.')")
+          echo "Publishing v$NEW_VERSION"
+
+          # Bump version in all publishable packages
+          for pkg in core cli mcp; do
+            node -e "
+              const fs = require('fs');
+              const p = JSON.parse(fs.readFileSync('./packages/$pkg/package.json', 'utf8'));
+              p.version = '$NEW_VERSION';
+              fs.writeFileSync('./packages/$pkg/package.json', JSON.stringify(p, null, 2) + '\n');
+            "
+          done
+
+          # Replace workspace:* with real version for publishing
+          for pkg in cli mcp; do
+            node -e "
+              const fs = require('fs');
+              const p = JSON.parse(fs.readFileSync('./packages/$pkg/package.json', 'utf8'));
+              if (p.dependencies && p.dependencies['@sowdb/core'] === 'workspace:*') {
+                p.dependencies['@sowdb/core'] = '^$NEW_VERSION';
+              }
+              fs.writeFileSync('./packages/$pkg/package.json', JSON.stringify(p, null, 2) + '\n');
+            "
+          done
+
+          # Publish in dependency order, skipping already-published versions
+          for pkg in core cli mcp; do
+            cd "$ROOT_DIR/packages/$pkg"
+            PKG_NAME=$(node -p "require('./package.json').name")
+            if npm view "$PKG_NAME@$NEW_VERSION" version 2>/dev/null; then
+              echo "⏭ $PKG_NAME@$NEW_VERSION already published, skipping"
+            else
+              npm pkg fix 2>/dev/null || true
+              npm publish --access public
+              echo "✅ Published $PKG_NAME@$NEW_VERSION"
+            fi
+          done
+          cd "$ROOT_DIR"
+
+          # Restore workspace:* for the committed version
+          for pkg in cli mcp; do
+            node -e "
+              const fs = require('fs');
+              const p = JSON.parse(fs.readFileSync('./packages/$pkg/package.json', 'utf8'));
+              if (p.dependencies && p.dependencies['@sowdb/core']) {
+                p.dependencies['@sowdb/core'] = 'workspace:*';
+              }
+              fs.writeFileSync('./packages/$pkg/package.json', JSON.stringify(p, null, 2) + '\n');
+            "
+          done
+
+          # Commit version bump and tag
+          git add -A
+          git commit -m "release: v$NEW_VERSION"
+          git tag "v$NEW_VERSION"
+          git push origin main --tags
+
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: Create GitHub release
+        run: gh release create "v$NEW_VERSION" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
