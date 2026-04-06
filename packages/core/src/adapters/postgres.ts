@@ -413,10 +413,16 @@ export class PostgresAdapter implements DatabaseAdapter {
 
   async query<T = Record<string, unknown>>(
     sqlStr: string,
-    _params?: unknown[],
+    params?: unknown[],
   ): Promise<T[]> {
     const sql = this.db();
-    const rows = await sql.unsafe(sqlStr);
+    // postgres@3 `sql.unsafe(query, parameters)` binds values via real
+    // placeholders ($1, $2, ...) when `parameters` is provided. Passing
+    // undefined runs the query literally. This is the only safe path for
+    // SQL built with dynamic structure (see sampler/referential.ts).
+    const rows = params && params.length > 0
+      ? await sql.unsafe(sqlStr, params as unknown as Parameters<typeof sql.unsafe>[1])
+      : await sql.unsafe(sqlStr);
     return rows as unknown as T[];
   }
 }

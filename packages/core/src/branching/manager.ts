@@ -16,6 +16,7 @@ import {
 } from "./storage.js";
 import { diffBranch } from "./diff.js";
 import { loadProjectState } from "../config/loader.js";
+import { quoteIdent } from "../sql/identifiers.js";
 import type { Branch, BranchOptions, CheckpointInfo, DiffResult } from "./types.js";
 
 function resolveConnector(connectorName?: string): string {
@@ -470,10 +471,21 @@ export async function getBranchSample(
   });
 
   try {
+    // `table` comes from user/agent input via `sow branch sample <branch> <table>`
+    // or the `sow_branch_sample` MCP tool — we cannot trust it. Identifiers
+    // cannot be parameterized so we quote via the SQL-standard escape. The
+    // limit is numeric-clamped to [0, 100] then passed as $1. A non-finite
+    // input (undefined, NaN) falls back to the documented default of 5.
+    // LIMIT 0 is legal SQL and a valid request (empty result set).
+    const rawLimit = typeof limit === "number" && Number.isFinite(limit)
+      ? Math.floor(limit)
+      : 5;
+    const safeLimit = Math.min(Math.max(0, rawLimit), 100);
     const rows = await sql.unsafe(
-      `SELECT * FROM "${table}" LIMIT ${Math.min(limit, 100)}`,
+      `SELECT * FROM ${quoteIdent(table)} LIMIT $1`,
+      [safeLimit] as unknown as Parameters<typeof sql.unsafe>[1],
     );
-    return rows.map((r: any) => ({ ...r }));
+    return rows.map((r: Record<string, unknown>) => ({ ...r }));
   } finally {
     await sql.end();
   }

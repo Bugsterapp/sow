@@ -1,4 +1,5 @@
 import type { DatabaseAdapter, Relationship } from "../types.js";
+import { quoteIdent } from "../sql/identifiers.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -86,12 +87,16 @@ export async function ensureReferentialIntegrity(
           if (keyParts.length !== rel.targetColumns.length) continue;
 
           try {
+            // Identifiers are quoted (not parameterizable in Postgres);
+            // values go through $1,$2,... bind parameters. This is safe
+            // against a text PK like "O'Brien" and against crafted payloads.
             const conditions = rel.targetColumns
-              .map((col, i) => `"${col}" = '${keyParts[i]}'`)
+              .map((col, i) => `${quoteIdent(col)} = $${i + 1}`)
               .join(" AND ");
 
             const rows = await adapter.query(
-              `SELECT * FROM "${rel.targetTable}" WHERE ${conditions} LIMIT 1`,
+              `SELECT * FROM ${quoteIdent(rel.targetTable)} WHERE ${conditions} LIMIT 1`,
+              keyParts,
             );
             if (rows.length > 0) {
               const existing = result.get(rel.targetTable) || [];
@@ -120,15 +125,16 @@ export async function ensureReferentialIntegrity(
 
           if (!childFKValues.has(parentKey)) {
             try {
+              const values = rel.sourceColumns.map((_, i) =>
+                String(parent[rel.targetColumns[i]] ?? ""),
+              );
               const conditions = rel.sourceColumns
-                .map(
-                  (col, i) =>
-                    `"${col}" = '${String(parent[rel.targetColumns[i]] ?? "")}'`,
-                )
+                .map((col, i) => `${quoteIdent(col)} = $${i + 1}`)
                 .join(" AND ");
 
               const rows = await adapter.query(
-                `SELECT * FROM "${rel.sourceTable}" WHERE ${conditions} LIMIT 1`,
+                `SELECT * FROM ${quoteIdent(rel.sourceTable)} WHERE ${conditions} LIMIT 1`,
+                values,
               );
               if (rows.length > 0) {
                 const existing = result.get(rel.sourceTable) || [];
@@ -205,9 +211,15 @@ async function resolveImplicitReferences(
 
       for (const batch of idBatches) {
         try {
-          const idList = batch.map((id) => `'${id}'`).join(",");
+          // Build placeholder list ($1,$2,...) the same length as the batch.
+          // Each value is already guaranteed UUID-shaped by the gate above,
+          // but parameterization is the correct discipline regardless.
+          const placeholders = batch
+            .map((_, i) => `$${i + 1}`)
+            .join(",");
           const fetched = await adapter.query(
-            `SELECT * FROM "${targetTable}" WHERE id IN (${idList})`,
+            `SELECT * FROM ${quoteIdent(targetTable)} WHERE id IN (${placeholders})`,
+            batch,
           );
           if (fetched.length > 0) {
             const existing = result.get(targetTable) || [];
