@@ -184,6 +184,15 @@ export async function runBranch(
           console.log(`  Port:       ${branch.port}`);
           console.log(`  Created:    ${timeAgo(branch.createdAt)}`);
           console.log(`  URL:        ${branch.connectionString}`);
+          if (branch.provider === "docker") {
+            const dmeta = branch.providerMeta as { databaseName?: string; containerName?: string };
+            if (dmeta.databaseName) {
+              console.log(`  Database:   ${dmeta.databaseName}`);
+            }
+            if (dmeta.containerName) {
+              console.log(`  Container:  ${dmeta.containerName}`);
+            }
+          }
           const checkpoints = listCheckpoints(branch.name);
           if (checkpoints.length > 0) {
             console.log(`  Checkpoints: ${checkpoints.map((cp) => cp.name).join(", ")}`);

@@ -153,6 +153,49 @@ export function deleteConnectorSnapshot(connectorName: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Per-connector Docker container metadata (Lane B)
+// ---------------------------------------------------------------------------
+
+export interface ConnectorContainerInfo {
+  containerId: string;
+  containerName: string;
+  port: number;
+  pgVersion: string;
+  seedDatabase: string;
+  createdAt: string;
+}
+
+export function getConnectorContainerPath(connectorName: string): string {
+  return join(getSnapshotDir(connectorName), "container.json");
+}
+
+export function readConnectorContainer(
+  connectorName: string,
+): ConnectorContainerInfo | null {
+  const p = getConnectorContainerPath(connectorName);
+  if (!existsSync(p)) return null;
+  try {
+    return JSON.parse(readFileSync(p, "utf-8")) as ConnectorContainerInfo;
+  } catch {
+    return null;
+  }
+}
+
+export function writeConnectorContainer(
+  connectorName: string,
+  info: ConnectorContainerInfo,
+): void {
+  const dir = getSnapshotDir(connectorName);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(getConnectorContainerPath(connectorName), JSON.stringify(info, null, 2), "utf-8");
+}
+
+export function deleteConnectorContainer(connectorName: string): void {
+  const p = getConnectorContainerPath(connectorName);
+  if (existsSync(p)) rmSync(p, { force: true });
+}
+
+// ---------------------------------------------------------------------------
 // Checkpoints — point-in-time snapshots within a branch
 // ---------------------------------------------------------------------------
 
