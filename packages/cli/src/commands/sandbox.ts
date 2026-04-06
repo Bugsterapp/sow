@@ -23,6 +23,7 @@ interface SandboxFlags {
   seed?: number;
   noSanitize?: boolean;
   full?: boolean;
+  yesDestructiveSupabase?: boolean;
 }
 
 async function pickIndex(max: number): Promise<number> {
@@ -110,6 +111,7 @@ export async function runSandbox(
         seed: flags.seed,
         noSanitize: flags.noSanitize,
         full: flags.full,
+        destructiveSupabaseConsent: !!flags.yesDestructiveSupabase,
       });
       connectorName = result.name;
     }
@@ -127,7 +129,9 @@ export async function runSandbox(
       if (!isJSON && !isQuiet) {
         console.error("  Spinning up local branch...");
       }
-      branch = await createBranch(branchName, connectorName, {});
+      branch = await createBranch(branchName, connectorName, {
+        destructiveSupabaseConsent: !!flags.yesDestructiveSupabase,
+      });
     }
 
     // 4. Patch env file unless disabled

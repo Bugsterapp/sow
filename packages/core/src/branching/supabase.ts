@@ -1,11 +1,34 @@
 import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { createConnection } from "node:net";
 import postgres from "postgres";
 import { quoteIdent } from "../sql/identifiers.js";
 
 const SUPABASE_DB_PORT = 54322;
 const SUPABASE_API_PORT = 54321;
+
+/**
+ * Is the given directory a Supabase-CLI-managed project?
+ *
+ * We check for `supabase/config.toml` (the file the Supabase CLI
+ * creates on `supabase init`). A bare `supabase/` directory is not
+ * enough — some projects have that name for unrelated reasons.
+ *
+ * This check is the FIRST of three gates the Supabase branch provider
+ * uses before doing anything destructive. See provider-registry.ts
+ * and providers/supabase.ts for the other two.
+ */
+export function isSupabaseProject(cwd: string): boolean {
+  try {
+    const configPath = join(cwd, "supabase", "config.toml");
+    if (!existsSync(configPath)) return false;
+    const s = statSync(configPath);
+    return s.isFile();
+  } catch {
+    return false;
+  }
+}
 
 export interface SupabaseLocalInfo {
   dbUrl: string;
@@ -74,12 +97,46 @@ export async function detectSupabaseLocal(): Promise<SupabaseLocalInfo | null> {
 }
 
 /**
- * Load a SQL file into the local Supabase Postgres, replacing the public schema.
+ * Redact user:password from a Postgres URL for safe logging.
+ * Keeps host/port/db so the user can identify WHICH Supabase is being
+ * clobbered, but never leaks the credential.
+ */
+function redactDbUrl(dbUrl: string): string {
+  try {
+    const u = new URL(dbUrl);
+    return `${u.protocol}//${u.hostname}:${u.port || 5432}${u.pathname}`;
+  } catch {
+    return "<unparseable url>";
+  }
+}
+
+/**
+ * Load a SQL file into the local Supabase Postgres, replacing the public
+ * schema.
+ *
+ * This is a DESTRUCTIVE operation: it drops everything in the `public`
+ * schema of the target DB. Callers must have passed all three gates in
+ * SupabaseBranchProvider.detect() before reaching here. As a final
+ * defense-in-depth measure, we print a prominent stderr warning naming
+ * the exact target URL (credential-redacted) before the DROP runs.
+ * If the user sees this warning and was NOT expecting it, something
+ * upstream of this function is wrong — stop the process immediately
+ * and file an issue.
  */
 export async function loadIntoSupabase(
   initSqlPath: string,
   dbUrl: string,
 ): Promise<void> {
+  // Audit-trail warning. Always printed, even with --yes or --json,
+  // because the destructive action is worth announcing no matter what.
+  // Writes to stderr so JSON consumers on stdout are unaffected.
+  process.stderr.write(
+    `\n  ⚠ Supabase branch provider: about to DROP schema public of ${redactDbUrl(dbUrl)}\n` +
+    `    All tables in that schema will be replaced with sanitized sample data.\n` +
+    `    (This is the opted-in Supabase branch flow. If you did not expect\n` +
+    `     this, abort now with Ctrl+C and see docs/sandbox.md.)\n\n`,
+  );
+
   const sql = postgres(dbUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
 
   try {

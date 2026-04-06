@@ -4,6 +4,7 @@ import type {
   ProviderBranchOpts,
   ProviderBranchResult,
   ProviderSnapshotData,
+  DetectionContext,
 } from "../provider.js";
 import type { Branch, BranchStatus, AuthUserMapping } from "../types.js";
 import type { DatabaseAdapter, SanitizedTable } from "../../types.js";
@@ -12,6 +13,7 @@ import {
   loadIntoSupabase,
   createTestAuthUsers,
   cleanSupabaseBranch,
+  isSupabaseProject,
 } from "../supabase.js";
 import { transformValue } from "../../sanitizer/transformer.js";
 
@@ -94,9 +96,63 @@ async function fetchAuthUserMappings(
 export class SupabaseBranchProvider implements BranchProvider {
   readonly name = "supabase";
 
-  async detect(): Promise<ProviderDetection | null> {
+  /**
+   * The Supabase provider is DESTRUCTIVE by design: it drops and
+   * recreates the `public` schema of the target Postgres to load
+   * sanitized sandbox data into it. That is the right behavior when
+   * the user is working inside a Supabase project and wants their
+   * local Supabase DB to BE the sandbox (so they can keep using the
+   * Auth/RLS/Realtime/Storage integration). It is the WRONG behavior
+   * when run from any other directory.
+   *
+   * We therefore gate activation on three independent signals. All
+   * three must pass. If any fails, we return null and the registry
+   * falls through to the Docker provider.
+   *
+   *   Gate 1 — project-local signal:
+   *     The current working directory MUST contain a
+   *     `supabase/config.toml` file (i.e. it is a Supabase-CLI-
+   *     managed project). A user running `sow sandbox` from an
+   *     unrelated project will never activate this provider, even
+   *     if a local Supabase instance is running elsewhere on the
+   *     machine for a different project.
+   *
+   *   Gate 2 — explicit consent:
+   *     The caller MUST pass `ctx.destructiveConsent === true`.
+   *     Consent comes from either the CLI flag
+   *     `--yes-destructive-supabase` or from a persistent
+   *     acknowledgment in `.sow.yml` (`supabase.destructive_consent: true`).
+   *     Users must opt in to the destructive behavior explicitly,
+   *     with full understanding of what it does.
+   *
+   *   Gate 3 — infrastructure reachability:
+   *     Local Supabase Postgres must actually be running (port 54322
+   *     reachable or `supabase status` returns a DB URL).
+   *
+   * This is belt + suspenders + a third belt. The historical bug
+   * where running `sow sandbox` in an unrelated project would DROP
+   * the public schema of the user's active Supabase project is
+   * closed by Gate 1 alone, but we keep all three for defense in
+   * depth.
+   */
+  async detect(ctx?: DetectionContext): Promise<ProviderDetection | null> {
+    // Gate 1: the current project must itself be a Supabase project.
+    // Without this, any user with a local Supabase running anywhere
+    // on the machine would have their Supabase DB clobbered by an
+    // unrelated `sow sandbox` call.
+    const cwd = ctx?.cwd ?? process.cwd();
+    if (!isSupabaseProject(cwd)) return null;
+
+    // Gate 2: the caller must have explicitly opted into destructive
+    // behavior. This is the user saying "I understand running this
+    // will drop my local Supabase's public schema, proceed."
+    if (ctx?.destructiveConsent !== true) return null;
+
+    // Gate 3: the Supabase stack must actually be reachable. If
+    // `supabase start` hasn't been run, fall through to Docker.
     const info = await detectSupabaseLocal();
     if (!info) return null;
+
     return {
       meta: {
         dbUrl: info.dbUrl,

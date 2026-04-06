@@ -3,6 +3,23 @@ import type { DatabaseAdapter, SanitizedTable } from "../types.js";
 import type { AuthUserMapping } from "./types.js";
 
 /**
+ * Context passed to a provider's detect() call.
+ * Providers use this to gate on project-local signals (e.g. the presence
+ * of a `supabase/` directory) rather than only machine-wide ones.
+ */
+export interface DetectionContext {
+  /** The project root being operated on. Defaults to process.cwd(). */
+  cwd: string;
+  /**
+   * If true, the user explicitly opted into any destructive provider
+   * behavior (e.g. DROP SCHEMA on a shared local Supabase). Providers
+   * that have a destructive path MUST refuse to activate when this is
+   * false and the path would be destructive.
+   */
+  destructiveConsent?: boolean;
+}
+
+/**
  * Result of a provider's detect() call.
  * If non-null, the provider is available and can create branches.
  */
@@ -58,14 +75,21 @@ export interface BranchProvider {
   readonly name: string;
 
   /**
-   * Check whether this provider is available in the current environment.
-   * Returns detection info if available, null otherwise.
+   * Check whether this provider is available in the current environment
+   * and appropriate for the current project. Returns detection info if
+   * available, null otherwise.
+   *
+   * Providers with destructive-by-default behavior (e.g. Supabase, which
+   * drops the `public` schema of the target DB) MUST gate on both:
+   *   1. Project-local signals (e.g. `supabase/config.toml` in ctx.cwd)
+   *   2. `ctx.destructiveConsent === true`
    *
    * Examples:
-   * - Docker provider checks `docker info`
-   * - Supabase provider checks `supabase status`
+   * - Docker provider checks `docker info` (non-destructive; cwd ignored)
+   * - Supabase provider checks `supabase status` AND `isSupabaseProject(ctx.cwd)`
+   *   AND `ctx.destructiveConsent === true`
    */
-  detect(): Promise<ProviderDetection | null>;
+  detect(ctx?: DetectionContext): Promise<ProviderDetection | null>;
 
   /**
    * Create a new branch with the given options.

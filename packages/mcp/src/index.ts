@@ -101,6 +101,75 @@ defineTool(
 );
 
 defineTool(
+  "sow_sandbox",
+  "Flagship zero-config flow: detect the project's Postgres source, create a connector snapshot (or reuse an existing one), and spin up a local sandbox branch. Equivalent to the `sow sandbox` CLI command but safe for agents — never patches env files, never prompts. Returns the branch with its connection string. If multiple sources are detected, the first candidate is used; pass `connectionString` explicitly to override.",
+  {
+    projectRoot: z
+      .string()
+      .optional()
+      .describe("Path to the project root. Defaults to current working directory."),
+    connectionString: z
+      .string()
+      .optional()
+      .describe("Explicit Postgres source URL. Overrides auto-detection."),
+    branchName: z
+      .string()
+      .optional()
+      .describe("Name for the sandbox branch (default: 'sandbox')"),
+  },
+  async ({ projectRoot, connectionString, branchName }) => {
+    // 1. Resolve source URL
+    let sourceUrl = connectionString;
+    if (!sourceUrl) {
+      const detection = detectConnection(projectRoot || process.cwd());
+      if (detection.connections.length === 0) {
+        throw new Error(
+          "no Postgres connection detected. Pass connectionString explicitly.",
+        );
+      }
+      sourceUrl = detection.connections[0].connectionString;
+    }
+
+    // 2. Connector — reuse if one already exists, else create
+    const existingConnectors = listConnectors();
+    let connectorName: string;
+    let connectorCreated = false;
+    if (existingConnectors.length > 0) {
+      connectorName = existingConnectors[0].name;
+    } else {
+      const result = await createConnector(sourceUrl!, {});
+      connectorName = result.name;
+      connectorCreated = true;
+    }
+
+    // 3. Branch — reuse if one with the same name already exists
+    const name = branchName || "sandbox";
+    const branches = await listBranches();
+    const existing = branches.find((b) => b.name === name);
+    let branch;
+    let branchCreated = false;
+    if (existing) {
+      branch = await getBranchInfo(name);
+    } else {
+      branch = await createBranch(name, connectorName, {});
+      branchCreated = true;
+    }
+
+    return {
+      success: true,
+      branch,
+      connector: connectorName,
+      connectorCreated,
+      branchCreated,
+      connectionString: branch.connectionString,
+      message: branchCreated || connectorCreated
+        ? `Sandbox ready at ${branch.connectionString}. Point your agent's DATABASE_URL at it.`
+        : `Sandbox already running at ${branch.connectionString}.`,
+    };
+  },
+);
+
+defineTool(
   "sow_connect",
   "Connect to a production Postgres database, analyze it, sample representative data, sanitize PII, and save a local snapshot. This is required before creating branches. Only reads from production, never writes. Use full=true to copy ALL rows instead of sampling.",
   {

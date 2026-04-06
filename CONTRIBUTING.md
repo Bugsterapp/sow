@@ -24,7 +24,7 @@ bun run --filter @sowdb/cli dev
 bun run build
 
 # Run tests
-bun test
+bun run test
 ```
 
 ## Project Structure
@@ -266,7 +266,7 @@ async postSnapshot(adapter, tables) {
 
 1. Fork the repo and create a feature branch
 2. Write tests for new functionality
-3. Ensure `bun test` passes
+3. Ensure `bun run test` passes
 4. Submit a PR with a clear description
 
 ## License

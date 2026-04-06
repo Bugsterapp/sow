@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { resolveProvider, getProvider } from "./provider-registry.js";
+import { loadSupabaseDestructiveConsent } from "../config/loader.js";
 import {
   addBranch,
   getBranch,
@@ -69,7 +70,18 @@ export async function createBranch(
     );
   }
 
-  const { provider, detection } = await resolveProvider();
+  // Destructive-Supabase gate: only grant consent if the caller
+  // explicitly passed the flag OR the project's `.sow.yml` has
+  // `providers.supabase.destructive_consent: true`. Any other state
+  // falls through to Docker (safe default).
+  const destructiveConsent =
+    opts.destructiveSupabaseConsent === true ||
+    loadSupabaseDestructiveConsent(process.cwd());
+
+  const { provider, detection } = await resolveProvider({
+    cwd: process.cwd(),
+    destructiveConsent,
+  });
 
   const meta = readConnectorMetadata(connector);
   const authMappings = meta?.authUsers?.map((u) => ({

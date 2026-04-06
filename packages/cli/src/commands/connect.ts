@@ -246,6 +246,7 @@ export async function runConnect(
       noSanitize: !merged.sanitizationConfig.enabled,
       allowUnsafe: !!flags.allowUnsafe,
       seed: merged.samplingConfig.seed,
+      destructiveSupabaseConsent: !!flags.yesDestructiveSupabase,
     }, log);
 
     saveProjectState({ defaultConnector: result.name });

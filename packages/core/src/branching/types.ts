@@ -29,6 +29,19 @@ export type BranchStatus = "running" | "stopped" | "creating" | "error";
 export interface BranchOptions {
   port?: number;
   pgVersion?: string;
+  /**
+   * Grants the Supabase branch provider permission to DROP and
+   * recreate the `public` schema of the project's local Supabase
+   * Postgres. Maps to CLI flag `--yes-destructive-supabase`.
+   *
+   * Without this flag AND without the `.sow.yml` opt-in
+   * (`providers.supabase.destructive_consent: true`), the Supabase
+   * provider refuses to activate even in a Supabase-CLI project with
+   * a local Supabase running — sow falls back to the Docker provider.
+   *
+   * Default: false.
+   */
+  destructiveSupabaseConsent?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +99,13 @@ export interface ConnectorCreateOptions {
    * NULLed out instead of aborting the connect. Maps to CLI `--allow-unsafe`.
    */
   allowUnsafe?: boolean;
+  /**
+   * Grants the Supabase branch provider permission to run its
+   * destructive `postSnapshot` / branch-create path against the
+   * project's local Supabase. See BranchOptions for the full rules.
+   * Maps to CLI flag `--yes-destructive-supabase`.
+   */
+  destructiveSupabaseConsent?: boolean;
 }
 
 export interface ConnectorCreateResult {

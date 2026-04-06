@@ -148,9 +148,10 @@ The reset is the magic. Without it, "let me try a different approach" means "let
 
 If your agent supports MCP (Claude Code, Cursor, Windsurf, Codex), `sow mcp --agent <name>` configures it to call sow's tools directly without any shell-out. The 22 tools cover the full loop:
 
-- `sow_sandbox` — the flagship zero-config flow
-- `sow_detect`, `sow_connect`, `sow_connector_list/refresh/delete`
-- `sow_branch_create/list/info/delete/reset/diff/exec/sample/tables/users/env`
+- `sow_sandbox` — the flagship zero-config flow (detect → connect → branch in one call)
+- `sow_detect`, `sow_connect`, `sow_analyze`
+- `sow_connector_list/delete/refresh`
+- `sow_branch_create/list/info/delete/reset/diff/exec/sample/tables/users/env/stop/start`
 - `sow_branch_save/load` (named checkpoints — like git commits for your sandbox)
 
 Every tool returns structured JSON. Every tool is idempotent where it can be. Every tool is documented so the agent picks the right one without prompting.

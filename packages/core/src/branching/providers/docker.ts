@@ -1,4 +1,4 @@
-import type { BranchProvider, ProviderDetection, ProviderBranchOpts, ProviderBranchResult } from "../provider.js";
+import type { BranchProvider, ProviderDetection, ProviderBranchOpts, ProviderBranchResult, DetectionContext } from "../provider.js";
 import type { Branch, BranchStatus } from "../types.js";
 import {
   ensureDocker,
@@ -88,7 +88,11 @@ function readMeta(branch: Branch): DockerProviderMeta {
 export class DockerBranchProvider implements BranchProvider {
   readonly name = "docker";
 
-  async detect(): Promise<ProviderDetection | null> {
+  async detect(_ctx?: DetectionContext): Promise<ProviderDetection | null> {
+    // Docker provider is non-destructive: it always creates a fresh,
+    // isolated container. Context (cwd, consent) is irrelevant — if
+    // Docker is available, this provider is safe to use from any
+    // directory without any opt-in.
     try {
       await ensureDocker();
       return { meta: {} };

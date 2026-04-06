@@ -81,7 +81,7 @@ Install the agent skill for context:
 npx skills add Bugsterapp/sow
 ```
 
-The MCP server exposes 22 tools: `sow_sandbox`, `sow_connect`, `sow_detect`, `sow_branch_create`, `sow_branch_reset`, `sow_branch_diff`, `sow_branch_save`, `sow_branch_load`, `sow_branch_exec`, `sow_branch_users`, `sow_branch_tables`, `sow_branch_sample`, and more. Every tool returns structured JSON. Agents drive the full sample → branch → exec → diff → reset loop without a human in the middle.
+The MCP server exposes 22 tools, including the flagship `sow_sandbox` (zero-config detect + connect + branch in one call), plus `sow_connect`, `sow_detect`, `sow_analyze`, `sow_branch_create`, `sow_branch_reset`, `sow_branch_diff`, `sow_branch_save`, `sow_branch_load`, `sow_branch_exec`, `sow_branch_users`, `sow_branch_tables`, `sow_branch_sample`, and more. Every tool returns structured JSON. Agents drive the full sample → branch → exec → diff → reset loop without a human in the middle. See [@sowdb/mcp](https://www.npmjs.com/package/@sowdb/mcp) for the full tool list.
 
 ## How It Works
 

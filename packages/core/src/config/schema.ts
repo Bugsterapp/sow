@@ -59,6 +59,36 @@ export const SowConfigSchema = z.object({
       outputPath: z.string().default("./sow-output"),
     })
     .optional(),
+
+  /**
+   * Per-provider opt-ins. These gate behavior that has blast radius
+   * beyond a fresh Docker container — for example, the Supabase
+   * provider's DROP of the target DB's `public` schema.
+   */
+  providers: z
+    .object({
+      supabase: z
+        .object({
+          /**
+           * Grants the Supabase branch provider permission to DROP and
+           * recreate the `public` schema of the project's local Supabase
+           * Postgres. Without this opt-in (and without the CLI flag
+           * `--yes-destructive-supabase`), sow falls back to the Docker
+           * provider even when a local Supabase is reachable and this
+           * project has a `supabase/config.toml`.
+           *
+           * Set this to true ONLY in projects where you intend your local
+           * Supabase's public schema to BE the sandbox — i.e. you're
+           * actively developing against Supabase locally and want the
+           * Auth/RLS/Realtime integration that comes with it.
+           *
+           * Default: false.
+           */
+          destructive_consent: z.boolean().default(false),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 export type SowConfigInput = z.input<typeof SowConfigSchema>;

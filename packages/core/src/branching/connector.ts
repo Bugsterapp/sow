@@ -16,6 +16,7 @@ import {
   readBranches,
 } from "./storage.js";
 import { resolveProvider } from "./provider-registry.js";
+import { loadSupabaseDestructiveConsent } from "../config/loader.js";
 import type {
   ConnectorMetadata,
   ConnectorInfo,
@@ -81,10 +82,24 @@ export async function createConnector(
     });
     const sanitized = sanitizer.sanitize(sampled.tables);
 
-    // Let the active provider extract any extra snapshot data (e.g. auth users)
+    // Let the active provider extract any extra snapshot data (e.g. auth users).
+    //
+    // The destructive-Supabase gate applies here too: a user running
+    // `sow connect` from an unrelated directory with a local Supabase
+    // running must NOT trigger the Supabase postSnapshot hook (which
+    // would reach into their active Supabase project's auth.users
+    // table). resolveProvider() now gates Supabase activation behind
+    // isSupabaseProject(cwd) AND explicit destructive consent.
+    const destructiveConsent =
+      opts.destructiveSupabaseConsent === true ||
+      loadSupabaseDestructiveConsent(process.cwd());
+
     let providerAuthUsers: ConnectorMetadata["authUsers"];
     try {
-      const { provider } = await resolveProvider();
+      const { provider } = await resolveProvider({
+        cwd: process.cwd(),
+        destructiveConsent,
+      });
       if (provider.postSnapshot) {
         const extra = await provider.postSnapshot(adapter, sanitized.tables);
         if (extra.authUsers && extra.authUsers.length > 0) {

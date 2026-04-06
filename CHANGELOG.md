@@ -6,60 +6,122 @@ All notable changes to sow are documented here. The format is loosely based on
 
 ## [Unreleased]
 
-The next release lands the launch positioning ("Stop letting Claude touch your
-prod database") plus the rest of the eng-review plan as five parallel PRs:
+## [0.1.16] — 2026-04-06
 
-### Added (planned)
+### Fixed (security/safety)
 
+- **Supabase branch provider no longer destroys unrelated projects.**
+  Previously, `sow sandbox` from any directory would activate the
+  Supabase provider whenever a local Supabase instance was reachable
+  anywhere on the machine, and then `loadIntoSupabase()` would
+  `DROP SCHEMA public CASCADE` against that Supabase Postgres. If the
+  user had `supabase start` running for project A and then ran
+  `sow sandbox` in unrelated project B, project A's public schema was
+  silently destroyed. This is exactly the class of accident the tool
+  is meant to prevent.
+
+  The fix gates the Supabase provider behind three independent hard
+  checks — ALL must pass for the provider to activate:
+  1. **Project-local signal.** The current working directory must
+     contain `supabase/config.toml` (i.e. it is itself a Supabase-CLI
+     project). A bare `supabase/` directory is not enough.
+  2. **Explicit destructive consent.** The caller must pass
+     `destructiveConsent: true` via the new CLI flag
+     `--yes-destructive-supabase`, OR via `.sow.yml` field
+     `providers.supabase.destructive_consent: true`. No implicit
+     activation.
+  3. **Infrastructure reachability.** Local Supabase Postgres must
+     actually be running.
+
+  If any gate fails, sow falls back to the Docker provider which spins
+  up a fresh, isolated container at `postgresql://sow:sow@localhost:54320/sow_sandbox`
+  with zero blast radius.
+
+  Before the destructive `DROP SCHEMA`, `loadIntoSupabase()` now also
+  prints a prominent stderr warning naming the target URL
+  (credential-redacted) as a final audit trail for opted-in users.
+
+  Added: new `--yes-destructive-supabase` CLI flag.
+  Added: new `.sow.yml` field `providers.supabase.destructive_consent`.
+  Added: `isSupabaseProject(cwd)` helper.
+  Added: 13 new unit tests covering all three gates and the
+  historical regression path (a test that fails if detect() fires
+  network I/O when cwd is not a Supabase project).
+
+### Overview
+
+The launch release. New positioning: "Stop letting Claude touch your prod database."
+New flagship command, new safety gate, sub-second resets, sharper sampler, and
+a fully repositioned README + cookbook.
+
+### Added
+
+- **`sow_sandbox` MCP tool** — the flagship zero-config flow is now directly
+  callable from MCP-enabled agents (Claude Code, Cursor, Windsurf, Codex).
+  Detects the project's Postgres source, creates or reuses a connector, and
+  spins up a sandbox branch in one call. Never patches env files (agents
+  should not modify the host project without explicit consent).
 - **`sow sandbox`** — flagship zero-config command. Auto-detects your project's
   Postgres source, samples + sanitizes, spins up a local sandbox, and patches
   `.env.local` with the new `DATABASE_URL`. One command from clone to working
-  sandbox. (PR #4)
+  sandbox.
 - **`sow env revert`** — restores `.env.local` from the `.env.local.sow.bak`
-  backup that `sow sandbox` writes. (PR #4)
+  backup that `sow sandbox` writes.
 - **JSONB sanitization.** sow now walks JSONB columns recursively and replaces
   values whose key matches a PII pattern. Closes the biggest PII leak vector in
-  modern Postgres schemas. (PR #3)
+  modern Postgres schemas.
 - **Postgres type coverage.** Built-in transformers for `inet`, `cidr`,
   `macaddr`, `macaddr8`, plus passthrough handling for `bytea`, `xml`, `money`,
-  `interval`, range types, array types, and custom enums. (PR #3)
+  `interval`, range types, array types, and custom enums.
 - **`--allow-unsafe` flag.** sow's sanitizer is now fail-closed: it aborts
   `sow connect` if it sees a Postgres type it can't verify. Pass `--allow-unsafe`
-  to NULL out unhandled columns instead. (PR #3)
+  to NULL out unhandled columns instead.
 - **`sow doctor <connector>`** — drill into a single connector's referential
   integrity warnings. Surfaces orphaned FKs, transient read errors, and
-  sanitization warnings. (PR #6)
+  sanitization warnings.
 - **Tag-driven release workflow.** New `version-bump.yml` workflow lets you cut
-  a major/minor/patch/prerelease via the GitHub Actions UI; the existing
-  `release.yml` is now triggered only by tag pushes (not every merge to main).
-  Prevents accidental releases on README typos. (PR #5)
+  a major/minor/patch/prerelease via the GitHub Actions UI; `release.yml` is
+  now triggered only by tag pushes (not every merge to main). Prevents
+  accidental releases on README typos.
+- **`docs/sandbox.md`, `docs/sanitization.md`, `docs/cookbook.md`** — full docs
+  for the flagship command, the sanitization gate and JSONB handling, and three
+  end-to-end agent workflows.
 
-### Changed (planned)
+### Changed
 
 - **`sow branch reset` is now sub-second** on a 10k-row schema. Refactored the
   Docker provider to use Postgres template databases (one long-lived container
   per connector, N branch databases inside). Old reset path was 5-15s; new path
   is ~200-800ms. Enables tight agent reset loops (50 iterations in a minute).
-  (PR #2)
 - **Sampler integrity warnings** — the referential-integrity pass now collects
   structured warnings (`parent_fetch_failed`, `parent_not_found`,
   `child_fetch_failed`, `implicit_ref_fetch_failed`) instead of silently
   swallowing them in `catch {}` blocks. Surfaced via `sow doctor <connector>`.
-  (PR #6)
 - **Implicit reference resolution is now batched.** The sampler used to fire
-  one query per (source_table, source_column) pair when resolving implicit FKs;
-  it now collects missing ids by target table across all sources and fires one
-  `IN (...)` query per target. ~10x reduction in `sow connect` round-trips on a
-  50-table schema. (PR #6)
+  one query per `(source_table, source_column)` pair when resolving implicit
+  FKs; it now collects missing ids by target table across all sources and fires
+  one `IN (...)` query per target. ~10x reduction in `sow connect` round-trips
+  on a 50-table schema.
 - **Skip-list for implicit references is now dynamic.** The old hardcoded
   English-only `["id", "user_id", "owner_id", "created_by"]` set is replaced
   with a dynamic check against the actual formal Relationships from the
-  schema. Works for non-English column names and unusual FK layouts. (PR #6)
-- **MCP tool count corrected.** Package descriptions now correctly state 22
-  tools (was: incorrectly listed as 15).
-- **README repositioned** around "Stop letting Claude touch your prod database"
-  with new sections on the agent reset loop, the cookbook of three workflows,
-  and a docs index.
+  schema. Works for non-English column names and unusual FK layouts.
+- **MCP server description corrected** from "15 tools" to the accurate count of
+  22 tools. The MCP README now lists every tool with its description.
+- **Top-level `README.md` repositioned** around "Stop letting Claude touch your
+  prod database" with new sections on the agent reset loop, the cookbook of
+  three workflows, and a docs index.
+- **`packages/cli/README.md` (the npm landing page) rewritten** to match the
+  new positioning and use `sow sandbox` as the first-run command instead of the
+  old `sow connect` / `sow branch create` flow.
+- **`sow --help` output** — fixed indentation for `--no-sanitize`, `branch
+  start`, `branch env`, `branch users`, `branch tables`, `branch sample`,
+  `branch run`, `connector list`.
+
+## [0.1.15] — 2026-04-06
+
+Version cut as part of the in-progress launch sprint. Published to npm but
+never released on GitHub. Superseded by 0.1.16.
 
 ## [0.1.14] — 2026-04-06
 

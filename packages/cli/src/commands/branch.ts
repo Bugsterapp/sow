@@ -81,6 +81,7 @@ export async function runBranch(
           {
             port: flags.port as number | undefined,
             pgVersion: flags.pgVersion as string | undefined,
+            destructiveSupabaseConsent: !!flags.yesDestructiveSupabase,
           },
         );
 

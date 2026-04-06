@@ -21,9 +21,15 @@ Options:
   -s, --seed <n>                Reproducibility seed (default: 42)
   --exclude <tables>            Comma-separated tables to exclude
   --full                        Copy all rows (no sampling, slower but complete)
-    --no-sanitize                 Skip PII sanitization
+  --no-sanitize                 Skip PII sanitization
   --allow-unsafe                NULL out columns with unknown Postgres types
                                 instead of aborting (default: abort)
+  --yes-destructive-supabase    Opt in to the Supabase branch provider, which
+                                DROPs the public schema of the project's local
+                                Supabase Postgres to load sanitized data. Only
+                                applies in projects with a supabase/config.toml.
+                                Without this flag, sow uses Docker even in
+                                Supabase projects (safe default).
   -c, --config <path>           Path to .sow.yml config file
   --json                        Output as JSON events (for agents)
   -q, --quiet                   Minimal output, no spinners
@@ -57,13 +63,13 @@ Commands:
   branch load <name> <cp>       Restore branch to a saved checkpoint
   branch exec <name>            Run SQL against a branch (--sql or --file)
   branch stop <name>            Stop a branch (keep container)
-    branch start <name>           Start a stopped branch
-    branch env <name>             Show env vars for a branch
-    branch users <name>           List test accounts in a branch
-    branch tables <name>          List tables with row counts
-    branch sample <name> <table>  Show sample rows from a table
-    branch run <name> -- <cmd>    Run a command with branch env vars
-    connector list                List saved connectors
+  branch start <name>           Start a stopped branch
+  branch env <name>             Show env vars for a branch
+  branch users <name>           List test accounts in a branch
+  branch tables <name>          List tables with row counts
+  branch sample <name> <table>  Show sample rows from a table
+  branch run <name> -- <cmd>    Run a command with branch env vars
+  connector list                List saved connectors
   connector delete <name>       Delete a connector and its snapshot
   connector refresh <name>      Re-create snapshot with fresh data
   analyze <url>                 Analyze database schema, stats, and PII
@@ -108,6 +114,7 @@ Examples:
       full: { type: "boolean", default: false },
       noSanitize: { type: "boolean", default: false },
       allowUnsafe: { type: "boolean", default: false },
+      yesDestructiveSupabase: { type: "boolean", default: false },
       config: { type: "string", shortFlag: "c" },
       json: { type: "boolean", default: false },
       quiet: { type: "boolean", shortFlag: "q", default: false },

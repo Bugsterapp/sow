@@ -87,6 +87,27 @@ export function saveGlobalConfig(config: GlobalConfig): void {
 }
 
 /**
+ * Read the destructive-Supabase opt-in from `.sow.yml` for the given
+ * project directory. Returns true only if the project explicitly set
+ * `providers.supabase.destructive_consent: true`. Any other state —
+ * no config file, no providers section, field absent, field false,
+ * malformed YAML — returns false.
+ *
+ * This is one of three gates on the Supabase branch provider. See
+ * `packages/core/src/branching/providers/supabase.ts` for the full
+ * gating logic.
+ */
+export function loadSupabaseDestructiveConsent(dir = process.cwd()): boolean {
+  try {
+    const cfg = loadProjectConfig(dir);
+    return cfg?.providers?.supabase?.destructive_consent === true;
+  } catch {
+    // Malformed config → treat as no consent. Fail-safe.
+    return false;
+  }
+}
+
+/**
  * Load project state from .sow/config.json (auto-managed, not user-edited).
  */
 export function loadProjectState(): ProjectState {
