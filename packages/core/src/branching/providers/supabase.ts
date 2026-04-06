@@ -46,28 +46,49 @@ function extractUserIds(tables: { rows: Record<string, unknown>[] }[]): string[]
   return Array.from(ids);
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Batch size keeps us well under Postgres's 65,535 bind-parameter limit
+// and gives the query planner a reasonable prepared-statement shape.
+const AUTH_FETCH_BATCH = 1000;
+
 async function fetchAuthUserMappings(
   adapter: DatabaseAdapter,
   userIds: string[],
 ): Promise<AuthUserMapping[]> {
-  if (userIds.length === 0) return [];
-  try {
-    // Build $1,$2,... placeholders and bind userIds as parameters. The
-    // pre-fix code interpolated the ids inside single-quoted literals,
-    // which a source row with a quote or crafted payload could escape.
-    const placeholders = userIds.map((_, i) => `$${i + 1}`).join(",");
-    const rows = await adapter.query<{ id: string; email: string }>(
-      `SELECT id::text, email FROM auth.users WHERE id IN (${placeholders})`,
-      userIds,
-    );
-    return rows.map((row) => ({
-      id: row.id,
-      email: row.email,
-      sanitizedEmail: transformValue(row.email, "email") as string,
-    }));
-  } catch {
-    return [];
+  // Only query for strictly UUID-shaped ids. Non-UUID values in the
+  // upstream heuristic (`length > 10`) would otherwise cause the whole
+  // batch to fail on a Postgres cast error and silently return empty.
+  const validIds = userIds.filter((id) => UUID_RE.test(id));
+  if (validIds.length === 0) return [];
+
+  const mappings: AuthUserMapping[] = [];
+
+  for (let offset = 0; offset < validIds.length; offset += AUTH_FETCH_BATCH) {
+    const batch = validIds.slice(offset, offset + AUTH_FETCH_BATCH);
+    // Build $1,$2,... placeholders and bind ids as parameters. The pre-fix
+    // code interpolated ids inside single-quoted literals, which a source
+    // row with a quote or crafted payload could escape.
+    const placeholders = batch.map((_, i) => `$${i + 1}`).join(",");
+    try {
+      const rows = await adapter.query<{ id: string; email: string }>(
+        `SELECT id::text, email FROM auth.users WHERE id IN (${placeholders})`,
+        batch,
+      );
+      for (const row of rows) {
+        mappings.push({
+          id: row.id,
+          email: row.email,
+          sanitizedEmail: transformValue(row.email, "email") as string,
+        });
+      }
+    } catch {
+      // A single batch failure shouldn't nuke the others — continue.
+    }
   }
+
+  return mappings;
 }
 
 export class SupabaseBranchProvider implements BranchProvider {

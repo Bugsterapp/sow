@@ -118,29 +118,42 @@ export async function loadIntoSupabase(
       // control the sandbox, a catalog row containing an unusual character
       // (e.g. a double quote from a quoted DDL identifier in the source
       // schema) must not break out of our identifier quoting.
-      const quotedTable = quoteIdent(tableName);
-
-      // Introspection queries run outside the try/catch below so that a
-      // transient read error cannot end up in the policy-disable fallback.
-      // Values are bound via $1; identifiers use quoteIdent for DDL.
-      const cols = await sql.unsafe(
-        "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name IN ('user_id', 'owner_id', 'created_by')",
-        [tableName] as unknown as Parameters<typeof sql.unsafe>[1],
-      );
-
+      let quotedTable: string;
+      let cols: { column_name: string }[];
       let hasProjId: unknown[] = [];
-      if (cols.length === 0) {
-        hasProjId = await sql.unsafe(
-          "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = 'project_id' LIMIT 1",
+
+      // Per-table introspection. A transient failure here (connection blip,
+      // catalog contention, quoteIdent rejecting a degenerate name) skips
+      // this ONE table without affecting the others. Critically, this does
+      // NOT disable RLS on failure — unconfigured tables remain locked
+      // (fail-safe) rather than falling open. Callers that need write
+      // access to a skipped table can retry via `sow branch reset`.
+      try {
+        quotedTable = quoteIdent(tableName);
+        cols = (await sql.unsafe(
+          "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name IN ('user_id', 'owner_id', 'created_by')",
           [tableName] as unknown as Parameters<typeof sql.unsafe>[1],
-        );
+        )) as { column_name: string }[];
+
+        if (cols.length === 0) {
+          hasProjId = await sql.unsafe(
+            "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = 'project_id' LIMIT 1",
+            [tableName] as unknown as Parameters<typeof sql.unsafe>[1],
+          );
+        }
+      } catch {
+        // Introspection failed for this table — skip without touching RLS.
+        // This is the fail-safe branch: if we can't read the shape, we
+        // don't trust ourselves to configure access, and leaving RLS in
+        // whatever state the restore put it in is safer than disabling.
+        continue;
       }
 
       try {
         await sql.unsafe(`ALTER TABLE public.${quotedTable} ENABLE ROW LEVEL SECURITY`);
 
         if (cols.length > 0) {
-          const userCol = cols[0].column_name as string;
+          const userCol = cols[0].column_name;
           const quotedUserCol = quoteIdent(userCol);
           await sql.unsafe(
             `CREATE POLICY "sow_owner" ON public.${quotedTable} FOR ALL USING (${quotedUserCol} = auth.uid())`,
@@ -155,10 +168,10 @@ export async function loadIntoSupabase(
           );
         }
       } catch {
-        // Policy creation failed (e.g. the table has a conflicting existing
-        // policy, or ENABLE RLS failed). Disable RLS so the dev can still
-        // use the sandbox table. This is a dev-sandbox fallback, not a
-        // production concession — branches are sanitized and ephemeral.
+        // Policy creation failed (e.g. conflicting existing policy). Disable
+        // RLS so the dev can still use the sandbox table. This is a
+        // dev-sandbox fallback, not a production concession — branches are
+        // sanitized and ephemeral.
         try {
           await sql.unsafe(`ALTER TABLE public.${quotedTable} DISABLE ROW LEVEL SECURITY`);
         } catch { /* ignore */ }

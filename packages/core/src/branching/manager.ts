@@ -474,12 +474,13 @@ export async function getBranchSample(
     // `table` comes from user/agent input via `sow branch sample <branch> <table>`
     // or the `sow_branch_sample` MCP tool — we cannot trust it. Identifiers
     // cannot be parameterized so we quote via the SQL-standard escape. The
-    // limit is numeric-clamped to [1, 100] then passed as $1. We preserve the
-    // documented default of 5 for non-finite inputs.
+    // limit is numeric-clamped to [0, 100] then passed as $1. A non-finite
+    // input (undefined, NaN) falls back to the documented default of 5.
+    // LIMIT 0 is legal SQL and a valid request (empty result set).
     const rawLimit = typeof limit === "number" && Number.isFinite(limit)
       ? Math.floor(limit)
       : 5;
-    const safeLimit = Math.min(Math.max(1, rawLimit), 100);
+    const safeLimit = Math.min(Math.max(0, rawLimit), 100);
     const rows = await sql.unsafe(
       `SELECT * FROM ${quoteIdent(table)} LIMIT $1`,
       [safeLimit] as unknown as Parameters<typeof sql.unsafe>[1],
