@@ -99,16 +99,28 @@ export function classifyPgType(
   pgType: string,
   knownEnumTypes: Set<string> = new Set(),
 ): "safe" | "handled" | "unknown" {
-  const normalized = pgType.trim().toLowerCase();
+  const trimmed = pgType.trim();
+  const normalized = trimmed.toLowerCase();
   const { baseType } = stripArraySuffix(normalized);
 
   if (SAFE_PASSTHROUGH_TYPES.has(baseType)) return "safe";
   if (HANDLED_TEXT_TYPES.has(baseType)) return "handled";
   if (HANDLED_SPECIAL_TYPES.has(baseType)) return "handled";
   if (NUMERIC_TYPES.test(baseType)) return "safe";
+
+  // Enum names are case-sensitive in Postgres (a camelCase enum like
+  // "LeadSource" is a different type from "leadsource"), so we must
+  // compare against the raw (non-lowercased) base type here. Otherwise
+  // the fail-closed gate fires on every mixed-case enum and blocks
+  // connect for any Prisma/TypeORM-style schema.
+  const { baseType: rawBase } = stripArraySuffix(trimmed);
+  if (knownEnumTypes.has(rawBase)) return "safe";
+  // Common qualified enum names like "public.UserRole"
+  if (knownEnumTypes.has(rawBase.replace(/^public\./, ""))) return "safe";
+  // Also accept a lowercased match for enums that really are lowercase.
   if (knownEnumTypes.has(baseType)) return "safe";
-  // Common qualified enum names like "public.user_role"
   if (knownEnumTypes.has(baseType.replace(/^public\./, ""))) return "safe";
+
   return "unknown";
 }
 
