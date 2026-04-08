@@ -150,13 +150,51 @@ export async function loadIntoSupabase(
     const initSql = readFileSync(initSqlPath, "utf-8");
     const statements = splitStatements(initSql);
 
+    // Classify each statement. DDL failures are fatal — a branch that
+    // silently lost a CREATE TABLE is exactly the "trustworthy sandbox"
+    // contract we must not break. DML (INSERT) failures are tolerated
+    // because sanitized rows can legitimately fail a CHECK constraint,
+    // but we count and report them so the user is never fooled into
+    // thinking a silent load was a clean load.
+    const isDdl = (stmt: string): boolean => {
+      const head = stmt.trim().replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/)\s*/g, "").toUpperCase();
+      return (
+        head.startsWith("CREATE") ||
+        head.startsWith("ALTER") ||
+        head.startsWith("DROP") ||
+        head.startsWith("DO ") ||
+        head.startsWith("DO$") ||
+        head.startsWith("GRANT") ||
+        head.startsWith("REVOKE") ||
+        head.startsWith("COMMENT") ||
+        head.startsWith("TRUNCATE") ||
+        head.startsWith("SELECT SETVAL")
+      );
+    };
+
+    let dmlFailures = 0;
     for (const stmt of statements) {
       if (!stmt.trim()) continue;
       try {
         await sql.unsafe(stmt);
-      } catch {
-        // Skip bad statements (e.g., broken JSON in sanitized data)
+      } catch (err) {
+        if (isDdl(stmt)) {
+          const preview = stmt.trim().slice(0, 160).replace(/\s+/g, " ");
+          throw new Error(
+            `Supabase restore failed on DDL statement: ${(err as Error).message}\n` +
+              `  Statement: ${preview}${stmt.length > 160 ? "..." : ""}`,
+          );
+        }
+        dmlFailures++;
       }
+    }
+    if (dmlFailures > 0) {
+      process.stderr.write(
+        `  ⚠ Supabase restore: ${dmlFailures} INSERT statement(s) failed and were skipped.\n` +
+          `    This usually means sanitized data violated a CHECK constraint or\n` +
+          `    row-level policy. Inspect the branch and consider re-running with\n` +
+          `    adjusted sanitizer rules if row counts look off.\n`,
+      );
     }
 
     // Grant access to Supabase roles

@@ -62,6 +62,20 @@ const QUOTED_TYPES = new Set([
 ]);
 
 export class PostgresTypeMapper implements TypeMapper {
+  private readonly enumNames: Set<string>;
+
+  /**
+   * @param enumNames  Set of user-defined enum type names discovered in the
+   *                   source schema. Enum literals must be single-quoted in
+   *                   INSERT statements (they are text-like values), otherwise
+   *                   Postgres tries to resolve them as bare identifiers and
+   *                   errors. Defaults to empty for callers that don't know
+   *                   about enums (legacy paths).
+   */
+  constructor(enumNames: Set<string> = new Set()) {
+    this.enumNames = enumNames;
+  }
+
   toSQLite(sourceType: string): string {
     const base = sourceType.replace(/\[\]$/, "").toLowerCase();
     return PG_TO_SQLITE[base] || "TEXT";
@@ -95,8 +109,15 @@ export class PostgresTypeMapper implements TypeMapper {
   }
 
   needsQuoting(sourceType: string): boolean {
-    const base = sourceType.replace(/\[\]$/, "").toLowerCase();
-    return QUOTED_TYPES.has(base) || sourceType.endsWith("[]");
+    const rawBase = sourceType.replace(/\[\]$/, "");
+    const base = rawBase.toLowerCase();
+    if (QUOTED_TYPES.has(base)) return true;
+    if (sourceType.endsWith("[]")) return true;
+    // Enum types are user-defined and case-sensitive. Match on the raw
+    // (non-lowercased) base because enum names like "LeadSource" must
+    // compare exactly.
+    if (this.enumNames.has(rawBase)) return true;
+    return false;
   }
 }
 

@@ -6,6 +6,31 @@ All notable changes to sow are documented here. The format is loosely based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **`sow branch create` silently dropped tables using case-sensitive enum
+  types.** The SQL exporter emitted `CREATE TYPE "LeadSource"` (quoted) but
+  then referenced the type unquoted in column DDL (`source LeadSource`),
+  which Postgres folds to lowercase and rejects with
+  `type "leadsource" does not exist`. Combined with a best-effort restore
+  path that ran psql with `ON_ERROR_STOP=0`, the failure was invisible —
+  the branch appeared to be created successfully but was missing every
+  table that referenced an enum, and every INSERT that carried an enum
+  literal would have failed too (values like `WEBSITE` were emitted as
+  bare identifiers instead of quoted strings).
+
+  Fix: quote enum type names in column DDL via the existing `quoteIdent`
+  helper, thread the enum name set through `PostgresTypeMapper` so enum
+  literals are single-quoted in INSERTs, and flip both the Docker and
+  Supabase restore paths to fail loudly on DDL errors (Docker now runs
+  with `ON_ERROR_STOP=1`; Supabase classifies statements and throws on
+  any DDL failure while counting and surfacing DML failures via stderr).
+  All other raw `"${ident}"` interpolations in the exporter were also
+  migrated to `quoteIdent()` for consistency.
+
+  Added: regression tests covering enum type quoting in DDL, enum literal
+  quoting in INSERTs, and that built-in Postgres types stay unquoted.
+
 ## [0.1.16] — 2026-04-06
 
 ### Fixed (security/safety)

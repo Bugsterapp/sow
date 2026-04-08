@@ -342,7 +342,16 @@ export async function execSqlInDb(
   return stdout;
 }
 
-/** Stream a SQL file from the host into psql for a given database. */
+/**
+ * Stream a SQL file from the host into psql for a given database.
+ *
+ * Runs with ON_ERROR_STOP=1 so any failed statement (a CREATE TABLE that
+ * references a missing type, a broken INSERT, etc.) aborts the restore
+ * and bubbles up as a rejected promise. A "best-effort" restore that
+ * silently drops tables is worse than a loud failure — the whole point
+ * of sow is a trustworthy sandbox, and a branch that's missing tables
+ * without telling anyone violates that contract.
+ */
 export async function loadInitSqlIntoDb(
   containerName: string,
   databaseName: string,
@@ -350,7 +359,7 @@ export async function loadInitSqlIntoDb(
 ): Promise<void> {
   const { readFile } = await import("node:fs/promises");
   const sqlContent = await readFile(initSqlPath, "utf-8");
-  await pipeSqlToDb(containerName, databaseName, sqlContent, /*onErrorStop*/ false);
+  await pipeSqlToDb(containerName, databaseName, sqlContent, /*onErrorStop*/ true);
 }
 
 async function pipeSqlToDb(
@@ -419,6 +428,9 @@ export async function dumpDatabase(
 /**
  * Restore a SQL dump into a branch database. Wipes the public schema first.
  * Targets the per-branch database (NOT the seed).
+ *
+ * Runs with ON_ERROR_STOP=1: if the dump can't be replayed cleanly we want
+ * the caller to hear about it, not end up with a partially-loaded branch.
  */
 export async function restoreDumpToDatabase(
   containerName: string,
@@ -430,7 +442,7 @@ export async function restoreDumpToDatabase(
     databaseName,
     "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;",
   );
-  await pipeSqlToDb(containerName, databaseName, sqlContent, /*onErrorStop*/ false);
+  await pipeSqlToDb(containerName, databaseName, sqlContent, /*onErrorStop*/ true);
 }
 
 /**

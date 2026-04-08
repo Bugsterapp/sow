@@ -23,3 +23,7 @@ skills-lock.json
 # Dev skills (local only, not for end users)
 .agents/dev-skills/
 .claude/skills/
+
+# Personal scratchpad — launch plans, TODOs, notes. Never committed.
+NOTES.local.md
+.scratch/
