@@ -1,6 +1,6 @@
 {
   "name": "@sowdb/core",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "sow core engine — analyze, sample, sanitize, and branch Postgres databases for safe coding-agent sandboxes",
   "type": "module",
   "license": "MIT",

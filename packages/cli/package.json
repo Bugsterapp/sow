@@ -1,6 +1,6 @@
 {
   "name": "@sowdb/cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Stop letting Claude touch your prod database. PII-safe local Postgres sandbox for coding agents.",
   "type": "module",
   "license": "MIT",
